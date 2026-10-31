@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { ArrowRight, CalendarDays, MapPin, Plus, QrCode, Search, Smartphone, Ticket, X } from "lucide-react";
+import { ArrowRight, BookOpen, CalendarDays, MapPin, Plus, QrCode, Search, Smartphone, Ticket, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Notice, Poster, Spinner } from "./components";
 import { api } from "./lib/api";
@@ -102,6 +102,9 @@ export default function Home({ session }: { session: Session | null }) {
             {query && <button type="button" onClick={() => setQuery("")} aria-label="Clear search" className="text-white/60"><X size={16} /></button>}
             <button className="btn btn-gold min-h-0! px-5 py-3">Search</button>
           </form>
+          <a href="#/guides" className="btn btn-line-light mt-4">
+            <BookOpen size={16} /> Manuals
+          </a>
         </div>
       </section>
 

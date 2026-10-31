@@ -18,6 +18,7 @@ export function SiteHeader({ session, overlay = false }: { session: Session | nu
     ["Events", "#/"],
     ["Sell tickets", sellHref(session)],
     ["My tickets", "#/dashboard"],
+    ["Manuals", "#/guides"],
   ];
 
   return (
@@ -67,6 +68,7 @@ export function SiteFooter({ session }: { session: Session | null }) {
           <a href="#/">Find events</a>
           <a href={sellHref(session)}>Sell tickets</a>
           <a href="#/dashboard">My tickets</a>
+          <a href="#/guides">Manuals</a>
           <a href={WA} target="_blank" rel="noreferrer">Help on WhatsApp</a>
           <a href="https://tankpromotions.online" target="_blank" rel="noreferrer">TANK Promotions</a>
           <span className="text-white/30">© {new Date().getFullYear()}</span>

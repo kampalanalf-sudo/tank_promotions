@@ -4,6 +4,7 @@ import { AuthScreen } from "./Auth";
 import { Logo, Notice, TicketCard } from "./components";
 import Dashboard from "./Dashboard";
 import EventPage from "./EventPage";
+import Guides from "./Guides";
 import Home from "./Home";
 import { api, isCloud } from "./lib/api";
 import { parseTicketRoute, type TicketPayload } from "./lib/tickets";
@@ -54,6 +55,7 @@ export default function App() {
   const ticket = parseTicketRoute(route);
   if (ticket) return <TicketPage payload={ticket} settings={settings} />;
 
+  if (route === "/guides") return <Guides session={session} />;
   if (route.startsWith("/e/")) return <EventPage key={route} id={route.slice(3)} session={session} settings={settings} />;
 
   if (route === "/login") return session ? <Redirect to="/dashboard" /> : <AuthScreen mode="login" />;
