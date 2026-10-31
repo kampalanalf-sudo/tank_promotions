@@ -6,6 +6,7 @@ import Dashboard from "./Dashboard";
 import EventPage from "./EventPage";
 import Guides from "./Guides";
 import Home from "./Home";
+import SmsConfirm from "./SmsConfirm";
 import { api, isCloud } from "./lib/api";
 import { parseTicketRoute, type TicketPayload } from "./lib/tickets";
 import type { OrderStatus, Session, Settings } from "./lib/types";
@@ -56,6 +57,7 @@ export default function App() {
   if (ticket) return <TicketPage payload={ticket} settings={settings} />;
 
   if (route === "/guides") return <Guides session={session} />;
+  if (route.startsWith("/sms")) return <SmsConfirm />;
   if (route.startsWith("/e/")) return <EventPage key={route} id={route.slice(3)} session={session} settings={settings} />;
 
   if (route === "/login") return session ? <Redirect to="/dashboard" /> : <AuthScreen mode="login" />;

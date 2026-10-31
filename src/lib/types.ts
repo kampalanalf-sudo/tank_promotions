@@ -79,6 +79,11 @@ export type Settings = {
   emailServiceId: string;
   emailTemplateId: string;
   emailPublicKey: string;
+  mtnMerchantCode: string;
+  mtnMerchantName: string;
+  airtelMerchantCode: string;
+  airtelMerchantName: string;
+  smsSecret: string;
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -88,6 +93,11 @@ export const DEFAULT_SETTINGS: Settings = {
   emailServiceId: "",
   emailTemplateId: "",
   emailPublicKey: "",
+  mtnMerchantCode: "",
+  mtnMerchantName: "TANK Promotions",
+  airtelMerchantCode: "7185040",
+  airtelMerchantName: "TANK Promotions",
+  smsSecret: "",
 };
 
 export const EVENT_TYPES = ["Nightlife", "Live music", "Dining", "Party", "Festival", "Sports", "Conference", "Activation", "Other"];

@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { ADMIN_EMAIL, SUPABASE_ANON_KEY, SUPABASE_URL } from "./config";
+import { parsePaymentSms, smsAlreadyApplied, smsMatchesOrder } from "./sms";
 import {
   DEFAULT_SETTINGS,
   type Brief,
@@ -91,6 +92,11 @@ function rowToSettings(r: any): Settings {
     emailServiceId: r.email_service_id || "",
     emailTemplateId: r.email_template_id || "",
     emailPublicKey: r.email_public_key || "",
+    mtnMerchantCode: r.mtn_merchant_code || "",
+    mtnMerchantName: r.mtn_merchant_name || "",
+    airtelMerchantCode: r.airtel_merchant_code || "",
+    airtelMerchantName: r.airtel_merchant_name || "",
+    smsSecret: r.sms_secret || "",
   };
 }
 
@@ -375,7 +381,7 @@ export const api = {
     return order;
   },
 
-  /** Records the ZengaPay reference (status PENDING) or the final payment result. */
+  /** Records the merchant payment reference (status PENDING) or the final payment result. */
   async confirmOrder(code: string, status: "PENDING" | "SUCCEEDED" | "FAILED", zengaRef = "") {
     if (cloud) {
       const { error } = await cloud.rpc("confirm_order", { p_code: code, p_status: status, p_zenga_ref: zengaRef });
@@ -465,10 +471,14 @@ export const api = {
   /* ---------- settings ---------- */
   async getSettings(): Promise<Settings> {
     if (cloud) {
-      const { data } = await cloud.from("settings").select("*").eq("id", 1).maybeSingle();
-      return rowToSettings(data);
+      const full = await cloud.from("settings").select("*").eq("id", 1).maybeSingle();
+      if (full.data) return rowToSettings(full.data);
+      const pub = await cloud.rpc("storefront_settings");
+      return rowToSettings(pub.data);
     }
-    return { ...DEFAULT_SETTINGS, ...read<Partial<Settings>>(K.settings, {}) };
+    const local = { ...DEFAULT_SETTINGS, ...read<Partial<Settings>>(K.settings, {}) };
+    if (!local.airtelMerchantCode) local.airtelMerchantCode = DEFAULT_SETTINGS.airtelMerchantCode;
+    return local;
   },
 
   async saveSettings(s: Settings) {
@@ -481,10 +491,43 @@ export const api = {
         email_service_id: s.emailServiceId.trim(),
         email_template_id: s.emailTemplateId.trim(),
         email_public_key: s.emailPublicKey.trim(),
+        mtn_merchant_code: s.mtnMerchantCode.trim(),
+        mtn_merchant_name: s.mtnMerchantName.trim(),
+        airtel_merchant_code: s.airtelMerchantCode.trim(),
+        airtel_merchant_name: s.airtelMerchantName.trim(),
+        sms_secret: s.smsSecret.trim(),
       });
       fail(error);
       return;
     }
     write(K.settings, s);
+  },
+
+  /**
+   * Matches a merchant confirmation SMS to a pending order and marks it paid.
+   * The secret must match the one saved in Payments, so a stranger cannot issue tickets.
+   */
+  async applyPaymentSms(secret: string, text: string): Promise<{ ok: boolean; message: string; code?: string }> {
+    const parsed = parsePaymentSms(text);
+    if (parsed.amount == null) return { ok: false, message: "That message has no UGX amount, so it was ignored." };
+
+    if (cloud) {
+      const { data, error } = await cloud.rpc("apply_payment_sms", { p_secret: secret, p_text: text });
+      if (error) return { ok: false, message: error.message };
+      const res = data as { ok: boolean; message: string; code?: string };
+      return res;
+    }
+
+    const settings = await api.getSettings();
+    if (!settings.smsSecret || secret !== settings.smsSecret) return { ok: false, message: "Wrong confirmation key." };
+    const all = read<Order[]>(K.orders, []);
+    const prior = smsAlreadyApplied(parsed, all);
+    if (prior) return { ok: true, message: "This payment was already processed.", code: prior.code };
+    const hits = all.filter((o) => smsMatchesOrder(parsed, o));
+    if (hits.length !== 1) {
+      return { ok: false, message: hits.length === 0 ? "No waiting payment matches that number and exact amount." : "More than one waiting payment matches. Ask the buyer to include the TNK reference." };
+    }
+    await api.confirmOrder(hits[0].code, "SUCCEEDED", parsed.paymentRef || "SMS");
+    return { ok: true, message: `Ticket issued for ${hits[0].name}.`, code: hits[0].code };
   },
 };

@@ -200,10 +200,10 @@ begin
   if not found then raise exception 'This event is not available.'; end if;
   if ev.starts_at < now() - interval '12 hours' then raise exception 'This event has already happened.'; end if;
 
-  -- Paid tickets plus unpaid ones reserved in the last 10 minutes.
+  -- Paid tickets plus unpaid ones reserved for the 30-minute SMS matching window.
   select coalesce(sum(qty), 0) into taken from orders
   where event_id = ev.id
-    and (status in ('SUCCEEDED', 'CHECKED_IN') or (status = 'PENDING' and created_at > now() - interval '10 minutes'));
+    and (status in ('SUCCEEDED', 'CHECKED_IN') or (status = 'PENDING' and created_at > now() - interval '30 minutes'));
   if taken + p_qty > ev.capacity then raise exception 'Sorry, not enough tickets left.'; end if;
 
   amt := ev.price * p_qty;
@@ -269,3 +269,107 @@ grant execute on function public.check_in(text) to authenticated;
 -- ---------------------------------------------------------------- admin account
 -- The admin is admin@tanktickets.site (see is_admin above). Create it in
 -- Supabase → Authentication → Users → Add user, with "Auto Confirm User" ticked.
+
+-- ---------------------------------------------------------------- merchant SMS payments
+alter table public.settings add column if not exists mtn_merchant_code text not null default '';
+alter table public.settings add column if not exists mtn_merchant_name text not null default '';
+alter table public.settings add column if not exists airtel_merchant_code text not null default '';
+alter table public.settings add column if not exists airtel_merchant_name text not null default '';
+alter table public.settings add column if not exists sms_secret text not null default '';
+update public.settings set airtel_merchant_code = '7185040' where id = 1 and coalesce(airtel_merchant_code, '') = '';
+
+drop policy if exists "settings read" on public.settings;
+create policy "settings read" on public.settings for select using (is_admin());
+
+create or replace function public.storefront_settings()
+returns json
+language sql stable security definer set search_path = public as $$
+  select json_build_object(
+    'email_service_id', email_service_id,
+    'email_template_id', email_template_id,
+    'email_public_key', email_public_key,
+    'mtn_merchant_code', mtn_merchant_code,
+    'mtn_merchant_name', mtn_merchant_name,
+    'airtel_merchant_code', airtel_merchant_code,
+    'airtel_merchant_name', airtel_merchant_name,
+    'simulate', simulate,
+    'zenga_env', zenga_env
+  ) from settings where id = 1;
+$$;
+
+create or replace function public.apply_payment_sms(p_secret text, p_text text)
+returns json
+language plpgsql security definer set search_path = public as $$
+declare
+  sec text;
+  compact text;
+  flat text;
+  amt integer;
+  ref text;
+  payer text;
+  tid text;
+  provider_ref text;
+  payment_ref text;
+  n integer;
+  hit orders;
+  updated orders;
+begin
+  select sms_secret into sec from settings where id = 1;
+  if sec is null or length(sec) < 8 or p_secret is distinct from sec then
+    return json_build_object('ok', false, 'message', 'Wrong confirmation key.');
+  end if;
+
+  compact := regexp_replace(coalesce(p_text, ''), '[[:space:]]+', ' ', 'g');
+  flat := regexp_replace(compact, '[[:space:]-]', '', 'g');
+  amt := substring(replace(compact, ',', '') from '\mUGX[[:space:]]*([0-9]{1,9})\M')::integer;
+  if amt is null then
+    return json_build_object('ok', false, 'message', 'That message has no UGX amount, so it was ignored.');
+  end if;
+
+  ref := substring(upper(compact) from '\mTNK-?([A-Z0-9]{6,12})\M');
+  if ref is not null then ref := 'TNK-' || ref; end if;
+
+  payer := substring(flat from 'from:?(?:\+?256|0)?(7[0-9]{8})');
+  if payer is not null then payer := '256' || payer; end if;
+
+  tid := substring(upper(compact) from '\mTID[:#-]?[[:space:]]*([A-Z0-9]{6,})\M');
+  provider_ref := substring(upper(compact) from '\mREFERENCE[:#-]?[[:space:]]*([A-Z0-9]{6,})\M');
+  payment_ref := case when tid is not null then 'TID:' || tid when provider_ref is not null then 'REF:' || provider_ref else null end;
+
+  if payment_ref is not null then
+    select * into hit from orders where zenga_ref = payment_ref limit 1;
+    if found then
+      return json_build_object('ok', true, 'message', 'This payment was already processed.', 'code', hit.code);
+    end if;
+  end if;
+
+  select count(*) into n from orders
+  where status = 'PENDING' and amount = amt
+    and created_at between now() - interval '30 minutes' and now() + interval '5 minutes'
+    and (
+      (ref is not null and replace(code, '-', '') = replace(ref, '-', ''))
+      or (ref is null and payer is not null and phone = payer)
+    );
+  if n <> 1 then
+    return json_build_object('ok', false, 'message', 'No single waiting payment matches that number and exact amount.');
+  end if;
+
+  select * into hit from orders
+  where status = 'PENDING' and amount = amt
+    and created_at between now() - interval '30 minutes' and now() + interval '5 minutes'
+    and (
+      (ref is not null and replace(code, '-', '') = replace(ref, '-', ''))
+      or (ref is null and payer is not null and phone = payer)
+    )
+  order by created_at asc limit 1;
+
+  update orders set status = 'SUCCEEDED', zenga_ref = coalesce(payment_ref, 'SMS')
+  where id = hit.id and status = 'PENDING' returning * into updated;
+  if not found then
+    return json_build_object('ok', false, 'message', 'This payment was already handled by another confirmation.');
+  end if;
+  return json_build_object('ok', true, 'message', 'Ticket issued for ' || hit.name || '.', 'code', hit.code);
+end $$;
+
+grant execute on function public.storefront_settings() to anon, authenticated;
+grant execute on function public.apply_payment_sms(text, text) to anon, authenticated;

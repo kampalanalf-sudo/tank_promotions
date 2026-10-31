@@ -1,13 +1,15 @@
-import { Check, LogOut, Pencil, Trash2, X } from "lucide-react";
+import { Check, Copy, LogOut, Pencil, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DoorPanel, EventForm, Logo, Notice, OrdersTable, Poster, Spinner, eventSummary } from "./components";
 import { EventStatusPill, eventLink } from "./Dashboard";
 import { api, isCloud } from "./lib/api";
 import { ugx } from "./lib/format";
 import { emailConfigured } from "./lib/tickets";
+import { parsePaymentSms } from "./lib/sms";
 import type { EventInput, Order, Session, Settings, TankEvent } from "./lib/types";
 
-const TABS = ["Review", "Events", "Orders", "Door", "Ticket delivery", "Payments"] as const;
+const TABS = ["Review", "Events", "Orders", "Door", "Ticket delivery", "Payments", "SMS"] as const;
+const SAMPLE_SMS = "RECEIVED. TID160268943390 UGX 500 from 758443666 referenceAPCUG220794100006272. BalUGX 500.";
 type Tab = (typeof TABS)[number];
 
 export default function Admin({ session, settings, onSettings }: { session: Session; settings: Settings | null; onSettings: (s: Settings) => void }) {
@@ -19,6 +21,12 @@ export default function Admin({ session, settings, onSettings }: { session: Sess
   const [editing, setEditing] = useState<EventInput | null>(null);
   const [form, setForm] = useState<Settings | null>(settings);
   const [saved, setSaved] = useState("");
+  const [smsText, setSmsText] = useState("");
+  const [smsResult, setSmsResult] = useState("");
+  const [copiedTrigger, setCopiedTrigger] = useState(false);
+  const parsedSms = useMemo(() => parsePaymentSms(smsText), [smsText]);
+  const savedSecret = settings?.smsSecret || "";
+  const triggerUrl = `${window.location.origin}${window.location.pathname}#/sms?key=${encodeURIComponent(savedSecret || "YOUR-KEY")}&text={sms_message}`;
 
   useEffect(() => setForm(settings), [settings]);
 
@@ -208,28 +216,98 @@ export default function Admin({ session, settings, onSettings }: { session: Sess
 
               {tab === "Payments" && form && (
                 <form onSubmit={(e) => saveSettings(e, "pay")} className="max-w-2xl">
-                  <h1 className="display text-5xl">Payments</h1>
-                  <label className="mt-6 flex items-start gap-3 border border-black/12 p-4 text-sm">
-                    <input type="checkbox" className="mt-1" checked={form.simulate} onChange={(e) => set("simulate", e.target.checked)} />
-                    <span><b>Test mode.</b> Buyers see a test checkout and no money is taken. Keep this on until live payments are set up securely.</span>
-                  </label>
-                  <label className="label mt-5">ZengaPay environment
-                    <select className="field" value={form.zengaEnv} onChange={(e) => set("zengaEnv", e.target.value as Settings["zengaEnv"])}>
-                      <option value="sandbox">Sandbox</option>
-                      <option value="production">Production</option>
-                    </select>
-                  </label>
-                  <label className="label mt-3">ZengaPay API token
-                    <input className="field" type="password" value={form.zengaToken} onChange={(e) => set("zengaToken", e.target.value)} autoComplete="off" />
-                  </label>
-                  <div className="mt-4">
-                    <Notice tone="warn">
-                      The token is sent to buyers' browsers to make the payment request, so anyone could copy it. Only use a <b>sandbox</b> token here. Taking real payments safely needs a small server (for example a Supabase Edge Function) that keeps the token secret.
-                    </Notice>
+                  <h1 className="display text-5xl">Merchant payments</h1>
+                  <p className="mt-4 text-sm leading-6 text-black/60">Buyers pay your MTN or Airtel merchant code. The confirmation SMS on that SIM then issues the ticket. ZengaPay is no longer used at checkout. Airtel code 7185040 is preset from your sample; add the MTN code separately.</p>
+                  <div className="mt-6 grid gap-4 sm:grid-cols-2">
+                    <label className="label">MTN merchant code<input className="field" inputMode="numeric" value={form.mtnMerchantCode} onChange={(e) => set("mtnMerchantCode", e.target.value)} /></label>
+                    <label className="label">Name on the MTN code<input className="field" value={form.mtnMerchantName} onChange={(e) => set("mtnMerchantName", e.target.value)} /></label>
+                    <label className="label">Airtel merchant code<input className="field" inputMode="numeric" value={form.airtelMerchantCode} onChange={(e) => set("airtelMerchantCode", e.target.value)} /></label>
+                    <label className="label">Name on the Airtel code<input className="field" value={form.airtelMerchantName} onChange={(e) => set("airtelMerchantName", e.target.value)} /></label>
                   </div>
-                  <button className="btn btn-gold mt-6">Save payment settings</button>
+                  <label className="label mt-4">SMS confirmation key
+                    <input className="field" value={form.smsSecret} onChange={(e) => set("smsSecret", e.target.value)} autoComplete="off" />
+                  </label>
+                  <button type="button" className="btn btn-line mt-3" onClick={() => set("smsSecret", crypto.randomUUID().replace(/-/g, "").slice(0, 20))}>Generate key</button>
+                  <button className="btn btn-gold mt-6">Save merchant codes</button>
                   {saved === "pay" && <span className="ml-3 text-sm text-emerald-700">Saved ✓</span>}
+                  <div className="mt-6">
+                    <Notice tone="warn">Automatic issuing only works after Supabase is connected, because the buyer's phone and your payment SIM are different devices. Keep the confirmation key private.</Notice>
+                  </div>
                 </form>
+              )}
+
+              {tab === "SMS" && form && (
+                <div className="max-w-2xl">
+                  <p className="eyebrow">Option A · active</p>
+                  <h1 className="display mt-2 text-5xl">Automatic SMS trigger</h1>
+                  <p className="mt-4 text-sm leading-6 text-black/60">
+                    The phone with your merchant SIM receives the payment SMS. MacroDroid opens the secure TANK link below. TANK matches the payer number and exact amount, then the buyer's waiting page becomes a ticket.
+                  </p>
+
+                  <div className="mt-6 grid gap-2 border border-black/12 bg-white/60 p-4 text-sm">
+                    {[
+                      [isCloud, "Online database connected"],
+                      [savedSecret.length >= 8, "SMS confirmation key generated and saved"],
+                      [Boolean(settings?.airtelMerchantCode), "Airtel merchant code saved"],
+                      [Boolean(settings?.mtnMerchantCode), "MTN merchant code saved (add if you use MTN)"],
+                    ].map(([done, label]) => (
+                      <p key={String(label)} className="flex items-center gap-2">
+                        {done ? <Check size={15} className="text-emerald-700" /> : <X size={15} className="text-red-700" />}
+                        <span className={done ? "" : "text-black/55"}>{String(label)}</span>
+                      </p>
+                    ))}
+                  </div>
+
+                  <h2 className="mt-8 font-extrabold uppercase tracking-widest">1 · Copy this trigger link</h2>
+                  <div className="mt-3 border border-black/12 bg-white/60 p-4">
+                    <p className="break-all text-sm">{triggerUrl}</p>
+                    <button
+                      type="button"
+                      className="btn btn-dark mt-4 disabled:opacity-50"
+                      disabled={!savedSecret}
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(triggerUrl);
+                          setCopiedTrigger(true);
+                          setTimeout(() => setCopiedTrigger(false), 2000);
+                        } catch {
+                          window.prompt("Copy this trigger link:", triggerUrl);
+                        }
+                      }}
+                    >
+                      <Copy size={15} /> {copiedTrigger ? "Copied" : savedSecret ? "Copy trigger link" : "Save the key first"}
+                    </button>
+                  </div>
+
+                  <h2 className="mt-8 font-extrabold uppercase tracking-widest">2 · Set up MacroDroid on the merchant phone</h2>
+                  <ol className="mt-3 grid gap-3 text-sm leading-6 text-black/70">
+                    <li className="border border-black/12 p-4"><b>1.</b> Install MacroDroid and create a new macro.</li>
+                    <li className="border border-black/12 p-4"><b>2.</b> Trigger: <b>SMS Received</b>. Choose the MTN MoMo or Airtel Money sender. If the sender varies, use Any Number and Contains <b>UGX</b>.</li>
+                    <li className="border border-black/12 p-4"><b>3.</b> Action: <b>Open Website</b>. Paste the trigger link above.</li>
+                    <li className="border border-black/12 p-4"><b>4.</b> Keep <b>{"{sms_message}"}</b> in the link. MacroDroid replaces it with the SMS body. Older versions use <b>[sms_message]</b>.</li>
+                    <li className="border border-black/12 p-4"><b>5.</b> Save the macro, allow SMS permission, and keep that phone on with internet. Test with the sample below.</li>
+                  </ol>
+
+                  <h2 className="mt-8 font-extrabold uppercase tracking-widest">3 · Paste a test SMS</h2>
+                  <textarea className="field mt-3" rows={5} value={smsText} onChange={(e) => setSmsText(e.target.value)} placeholder={SAMPLE_SMS} />
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button type="button" className="btn btn-line" onClick={() => setSmsText(SAMPLE_SMS)}>Use sample SMS</button>
+                    <button className="btn btn-dark" disabled={!smsText || !savedSecret} onClick={async () => {
+                      const result = await api.applyPaymentSms(savedSecret, smsText);
+                      setSmsResult(result.message);
+                      if (result.ok) void load();
+                    }}>Match this SMS</button>
+                  </div>
+                  {smsText && (
+                    <div className="mt-4 grid gap-1 border border-black/12 bg-white/60 p-4 text-sm">
+                      <p><b>Amount:</b> {parsedSms.amount == null ? "not found" : ugx(parsedSms.amount)}</p>
+                      <p><b>Payer:</b> {parsedSms.phone || "not found"}</p>
+                      <p><b>Transaction:</b> {parsedSms.transactionId || parsedSms.providerReference || "not found"}</p>
+                      <p><b>Ticket reference:</b> {parsedSms.code || "none — will match by payer number and exact amount"}</p>
+                    </div>
+                  )}
+                  {smsResult && <p className="mt-3 text-sm">{smsResult}</p>}
+                </div>
               )}
 
               {tab === "Door" && (

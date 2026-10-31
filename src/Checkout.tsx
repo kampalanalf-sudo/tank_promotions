@@ -6,9 +6,9 @@ import { api } from "./lib/api";
 import { eventWhen, ugx } from "./lib/format";
 import { emailConfigured, newTicketCode, payloadFor } from "./lib/tickets";
 import type { Order, Session, Settings, TankEvent } from "./lib/types";
-import { collectPayment, detectNetwork, getCollectionStatus, isValidUgPhone, setTestResult, toMsisdn } from "./lib/zengapay";
+import { detectNetwork, isValidUgPhone, toMsisdn } from "./lib/zengapay";
 
-type Step = "qty" | "details" | "approve" | "done";
+type Step = "qty" | "details" | "pay" | "done";
 
 export function Checkout({
   event,
@@ -28,13 +28,12 @@ export function Checkout({
   const [step, setStep] = useState<Step>("qty");
   const [qty, setQty] = useState(1);
   const [name, setName] = useState(session?.name || "");
-  const [phone, setPhone] = useState(session?.phone || "");
+  const [phone, setPhone] = useState("");
   const [email, setEmail] = useState(session?.email || "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [order, setOrder] = useState<Order | null>(null);
-  const [payRef, setPayRef] = useState("");
-  const [testMode, setTestMode] = useState(false);
+  const [copied, setCopied] = useState("");
   const finished = useRef(false);
   const maxQty = Math.min(10, left);
   const total = event.price * qty;
@@ -68,19 +67,10 @@ export function Checkout({
       });
       setOrder(created);
       if (created.status === "SUCCEEDED") return finish(created);
-
-      const pay = await collectPayment(
-        { msisdn: created.phone, amount: created.amount, external_reference: created.externalRef, narration: `TANK ticket: ${event.title} x${qty}` },
-        settings,
-      );
-      if (!pay.ok) {
-        await api.confirmOrder(created.code, "FAILED");
-        return setError(pay.message);
-      }
-      await api.confirmOrder(created.code, "PENDING", pay.transactionReference);
-      setPayRef(pay.transactionReference);
-      setTestMode(pay.simulated);
-      setStep("approve");
+      const network = detectNetwork(created.phone);
+      const merchantCode = network === "Airtel" ? settings.airtelMerchantCode : settings.mtnMerchantCode;
+      if (!merchantCode) return setError(`The ${network} merchant code is not set yet. WhatsApp the organizer.`);
+      setStep("pay");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
     } finally {
@@ -89,35 +79,27 @@ export function Checkout({
   };
 
   useEffect(() => {
-    if (step !== "approve" || !payRef || !order || !settings) return;
+    if (step !== "pay" || !order) return;
     let stopped = false;
     const started = Date.now();
     const tick = async () => {
       if (stopped) return;
-      const status = await getCollectionStatus(payRef, settings);
-      if (status === "SUCCEEDED") {
-        await api.confirmOrder(order.code, "SUCCEEDED", payRef).catch(() => {});
-        return finish(order);
-      }
-      if (status === "FAILED" || Date.now() - started > 3 * 60e3) {
-        await api.confirmOrder(order.code, "FAILED", payRef).catch(() => {});
-        setError(status === "FAILED" ? "The payment was declined or cancelled." : "We did not receive your payment confirmation in time.");
-        setStep("details");
-        return;
-      }
-      setTimeout(tick, 2500);
+      const status = await api.ticketStatus(order.code).catch(() => null);
+      if (status === "SUCCEEDED" || status === "CHECKED_IN") return finish(order);
+      if (Date.now() - started > 30 * 60e3) return;
+      setTimeout(tick, 3000);
     };
     tick();
     return () => {
       stopped = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, payRef]);
+  }, [step, order?.code]);
 
   return (
-    <motion.div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 sm:items-center sm:p-5" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onMouseDown={step === "approve" ? undefined : onClose}>
+    <motion.div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 sm:items-center sm:p-5" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onMouseDown={step === "pay" ? undefined : onClose}>
       <motion.div initial={{ y: 50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} onMouseDown={(e) => e.stopPropagation()} className="relative max-h-[94vh] w-full max-w-lg overflow-y-auto bg-[#efe8d8] p-6 sm:p-8">
-        {step !== "approve" && <button onClick={onClose} className="absolute right-3 top-3 z-10 grid h-9 w-9 place-items-center bg-[#efe8d8]" aria-label="Close"><X size={18} /></button>}
+        {step !== "pay" && <button onClick={onClose} className="absolute right-3 top-3 z-10 grid h-9 w-9 place-items-center bg-[#efe8d8]" aria-label="Close"><X size={18} /></button>}
 
         {step === "done" && order ? (
           <div>
@@ -173,14 +155,14 @@ export function Checkout({
                 <label className="label">Full name
                   <input className="field" value={name} onChange={(e) => setName(e.target.value)} required maxLength={80} autoComplete="name" />
                 </label>
-                <label className="label">{free ? "WhatsApp number" : "MTN / Airtel number (pays and receives the ticket)"}
+                <label className="label">{free ? "WhatsApp number" : "Number you will pay from"}
                   <input className="field" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} required placeholder="0772 123456" autoComplete="tel" />
                 </label>
+                {!free && <p className="-mt-1 text-xs leading-5 text-black/50">Use the MTN or Airtel number that sends the money. We match the confirmation SMS by this number and the exact amount.</p>}
                 {phone && isValidUgPhone(phone) && !free && <p className="-mt-1 text-xs uppercase tracking-widest text-black/45">{detectNetwork(phone)} Mobile Money</p>}
                 <label className="label">Email {emailOn ? "" : "(optional)"}
                   <input className="field" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required={emailOn} autoComplete="email" />
                 </label>
-                {!free && settings?.simulate && <Notice tone="warn">Payments are in <b>test mode</b>: no money will be taken.</Notice>}
                 {error && <p className="text-sm text-red-700">{error}</p>}
                 <button disabled={busy || !name || !phone} className="btn btn-gold w-full disabled:opacity-50">
                   {busy ? "Please wait…" : free ? `Get ${qty} free ticket${qty > 1 ? "s" : ""}` : `Pay ${ugx(total)} with Mobile Money`} <ShieldCheck size={16} />
@@ -189,28 +171,51 @@ export function Checkout({
               </form>
             )}
 
-            {step === "approve" && (
-              <div className="mt-8">
-                <p className="eyebrow">ZengaPay</p>
-                <h3 className="display mt-2 text-4xl">Approve on your phone</h3>
-                <p className="mt-4 text-sm text-black/60">
-                  A payment request of <b>{ugx(total)}</b> was sent to <b>{order?.phone}</b>. Enter your Mobile Money PIN to confirm. This page updates automatically.
-                </p>
-                <div className="mt-5 h-1 overflow-hidden bg-black/10"><div className="progress-bar h-full bg-[#c9a227]" /></div>
-                {testMode && (
-                  <div className="mt-6">
-                    <Notice tone="warn">Test mode: choose the result to simulate.</Notice>
-                    <div className="mt-3 flex gap-2">
-                      <button className="btn btn-gold flex-1" onClick={() => setTestResult(payRef, "SUCCEEDED")}>Simulate approved</button>
-                      <button className="btn btn-line flex-1" onClick={() => setTestResult(payRef, "FAILED")}>Simulate declined</button>
-                    </div>
-                  </div>
-                )}
-              </div>
+            {step === "pay" && order && settings && (
+              <PayInstructions order={order} settings={settings} copied={copied} onCopy={async (value, label) => {
+                try { await navigator.clipboard.writeText(value); setCopied(label); } catch { window.prompt("Copy this:", value); }
+              }} />
             )}
           </>
         )}
       </motion.div>
     </motion.div>
+  );
+}
+
+function PayInstructions({
+  order,
+  settings,
+  copied,
+  onCopy,
+}: {
+  order: Order;
+  settings: Settings;
+  copied: string;
+  onCopy: (value: string, label: string) => void;
+}) {
+  const network = detectNetwork(order.phone);
+  const merchantCode = network === "Airtel" ? settings.airtelMerchantCode : network === "MTN" ? settings.mtnMerchantCode : settings.mtnMerchantCode || settings.airtelMerchantCode;
+  const merchantName = network === "Airtel" ? settings.airtelMerchantName : settings.mtnMerchantName;
+  const menu = network === "Airtel" ? "*185#" : "*165*3*3#";
+  return (
+    <div className="mt-7">
+      <p className="eyebrow">{network} merchant</p>
+      <h3 className="display mt-2 text-4xl">Pay, then wait here</h3>
+      <p className="mt-3 text-sm text-black/60">Pay this exact amount from <b>{order.phone}</b> to the merchant code below. This page issues the ticket when the confirmation SMS arrives.</p>
+      <div className="mt-5 grid gap-2 border border-black/12 bg-white/50 p-4 text-sm">
+        <p className="flex justify-between gap-3"><span>Pay</span><b>{ugx(order.amount)}</b></p>
+        <p className="flex justify-between gap-3"><span>Merchant code</span><b>{merchantCode}</b></p>
+        <p className="flex justify-between gap-3"><span>Name</span><b>{merchantName || "TANK Promotions"}</b></p>
+        <p className="flex justify-between gap-3"><span>Reference (optional)</span><b className="tracking-wider">{order.code}</b></p>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button type="button" className="btn btn-line" onClick={() => onCopy(order.code, "ref")}>{copied === "ref" ? "Copied" : "Copy reference"}</button>
+        <a className="btn btn-dark" href={`tel:${menu.replace("#", "%23")}`}>Open {network} menu</a>
+      </div>
+      <p className="mt-4 text-sm text-black/55">Dial {menu}, choose pay merchant, enter code {merchantCode} and amount {order.amount}. If the menu asks for a reason, add {order.code}; otherwise the paying number and amount are enough.</p>
+      <div className="mt-5 h-1 overflow-hidden bg-black/10"><div className="progress-bar h-full bg-[#c9a227]" /></div>
+      <p className="mt-3 text-xs uppercase tracking-widest text-black/45">Waiting for the payment SMS… keep this page open.</p>
+    </div>
   );
 }
