@@ -89,15 +89,15 @@ export type Settings = {
 export const DEFAULT_SETTINGS: Settings = {
   zengaEnv: "sandbox",
   zengaToken: "",
-  simulate: true,
+  simulate: false,
   emailServiceId: "",
   emailTemplateId: "",
   emailPublicKey: "",
-  mtnMerchantCode: "",
+  mtnMerchantCode: "89713371",
   mtnMerchantName: "TANK Promotions",
-  airtelMerchantCode: "7185040",
+  airtelMerchantCode: "7280543",
   airtelMerchantName: "TANK Promotions",
-  smsSecret: "",
+  smsSecret: "tank2026secret",
 };
 
 export const EVENT_TYPES = ["Nightlife", "Live music", "Dining", "Party", "Festival", "Sports", "Conference", "Activation", "Other"];

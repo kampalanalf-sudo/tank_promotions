@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { ADMIN_EMAIL, SUPABASE_ANON_KEY, SUPABASE_URL } from "./config";
-import { parsePaymentSms, smsAlreadyApplied, smsMatchesOrder } from "./sms";
+import { parsePaymentSms, smsMatchesOrder } from "./sms";
 import {
   DEFAULT_SETTINGS,
   type Brief,
@@ -381,7 +381,7 @@ export const api = {
     return order;
   },
 
-  /** Records the merchant payment reference (status PENDING) or the final payment result. */
+  /** Records the ZengaPay reference (status PENDING) or the final payment result. */
   async confirmOrder(code: string, status: "PENDING" | "SUCCEEDED" | "FAILED", zengaRef = "") {
     if (cloud) {
       const { error } = await cloud.rpc("confirm_order", { p_code: code, p_status: status, p_zenga_ref: zengaRef });
@@ -476,9 +476,7 @@ export const api = {
       const pub = await cloud.rpc("storefront_settings");
       return rowToSettings(pub.data);
     }
-    const local = { ...DEFAULT_SETTINGS, ...read<Partial<Settings>>(K.settings, {}) };
-    if (!local.airtelMerchantCode) local.airtelMerchantCode = DEFAULT_SETTINGS.airtelMerchantCode;
-    return local;
+    return { ...DEFAULT_SETTINGS, ...read<Partial<Settings>>(K.settings, {}) };
   },
 
   async saveSettings(s: Settings) {
@@ -520,14 +518,12 @@ export const api = {
 
     const settings = await api.getSettings();
     if (!settings.smsSecret || secret !== settings.smsSecret) return { ok: false, message: "Wrong confirmation key." };
-    const all = read<Order[]>(K.orders, []);
-    const prior = smsAlreadyApplied(parsed, all);
-    if (prior) return { ok: true, message: "This payment was already processed.", code: prior.code };
-    const hits = all.filter((o) => smsMatchesOrder(parsed, o));
+    const pending = read<Order[]>(K.orders, []).filter((o) => o.status === "PENDING");
+    const hits = pending.filter((o) => smsMatchesOrder(parsed, o));
     if (hits.length !== 1) {
-      return { ok: false, message: hits.length === 0 ? "No waiting payment matches that number and exact amount." : "More than one waiting payment matches. Ask the buyer to include the TNK reference." };
+      return { ok: false, message: hits.length === 0 ? "No waiting payment matches that SMS." : "More than one waiting payment matches. Add the ticket reference to the reason." };
     }
-    await api.confirmOrder(hits[0].code, "SUCCEEDED", parsed.paymentRef || "SMS");
-    return { ok: true, message: `Ticket issued for ${hits[0].name}.`, code: hits[0].code };
+    await api.confirmOrder(hits[0].code, "SUCCEEDED", parsed.tid || "SMS");
+    return { ok: true, message: `Ticket issued for ${hits[0].name} (UGX ${parsed.amount}).`, code: hits[0].code };
   },
 };
