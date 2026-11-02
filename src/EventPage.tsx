@@ -8,7 +8,7 @@ import { EventCard } from "./Home";
 import { api } from "./lib/api";
 import { calendarLink, dateParts, mapsLink, ugx } from "./lib/format";
 import type { Session, Settings, TankEvent } from "./lib/types";
-import { toMsisdn } from "./lib/zengapay";
+import { toMsisdn } from "./lib/phone";
 import { SiteFooter, SiteHeader, WhatsAppFab } from "./SiteChrome";
 
 export default function EventPage({ id, session, settings }: { id: string; session: Session | null; settings: Settings | null }) {

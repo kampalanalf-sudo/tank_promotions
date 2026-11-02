@@ -44,7 +44,7 @@ create table if not exists public.orders (
   qty integer not null check (qty between 1 and 10),
   amount integer not null check (amount >= 0),
   status text not null default 'PENDING' check (status in ('PENDING', 'SUCCEEDED', 'FAILED', 'CHECKED_IN')),
-  zenga_ref text not null default '',
+  payment_ref text not null default '',
   external_ref text not null default '',
   created_at timestamptz not null default now()
 );
@@ -64,14 +64,27 @@ create table if not exists public.briefs (
 
 create table if not exists public.settings (
   id integer primary key default 1 check (id = 1),
-  zenga_env text not null default 'sandbox',
-  zenga_token text not null default '',
-  simulate boolean not null default true,
   email_service_id text not null default '',
   email_template_id text not null default '',
   email_public_key text not null default ''
 );
 insert into public.settings (id) values (1) on conflict (id) do nothing;
+
+-- Upgrade older installations to merchant payment references.
+alter table public.orders add column if not exists payment_ref text not null default '';
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'orders' and column_name = 'zenga_ref'
+  ) then
+    execute 'update public.orders set payment_ref = zenga_ref where payment_ref = '''' and zenga_ref <> ''''';
+    execute 'alter table public.orders drop column zenga_ref';
+  end if;
+end $$;
+alter table public.settings drop column if exists zenga_env;
+alter table public.settings drop column if exists zenga_token;
+alter table public.settings drop column if exists simulate;
 
 -- ---------------------------------------------------------------- helpers
 
@@ -200,10 +213,10 @@ begin
   if not found then raise exception 'This event is not available.'; end if;
   if ev.starts_at < now() - interval '12 hours' then raise exception 'This event has already happened.'; end if;
 
-  -- Paid tickets plus unpaid ones reserved in the last 10 minutes.
+  -- Paid tickets plus unpaid ones reserved for the 30-minute SMS matching window.
   select coalesce(sum(qty), 0) into taken from orders
   where event_id = ev.id
-    and (status in ('SUCCEEDED', 'CHECKED_IN') or (status = 'PENDING' and created_at > now() - interval '10 minutes'));
+    and (status in ('SUCCEEDED', 'CHECKED_IN') or (status = 'PENDING' and created_at > now() - interval '30 minutes'));
   if taken + p_qty > ev.capacity then raise exception 'Sorry, not enough tickets left.'; end if;
 
   amt := ev.price * p_qty;
@@ -214,17 +227,16 @@ begin
   return row_to_json(r);
 end $$;
 
--- Saves the ZengaPay reference / result for a pending order.
--- NOTE: for real money, confirm payments from a server (ZengaPay callback via a
--- Supabase Edge Function) instead of trusting the buyer's browser.
-create or replace function public.confirm_order(p_code text, p_status text, p_zenga_ref text default '')
+-- Saves the merchant payment reference / result for a pending order.
+-- The SMS trigger uses a private confirmation key; keep that key on the merchant phone.
+create or replace function public.confirm_order(p_code text, p_status text, p_payment_ref text default '')
 returns boolean
 language plpgsql security definer set search_path = public as $$
 begin
   if p_status not in ('PENDING', 'SUCCEEDED', 'FAILED') then raise exception 'Invalid status.'; end if;
   update orders
      set status = p_status,
-         zenga_ref = coalesce(nullif(p_zenga_ref, ''), zenga_ref)
+         payment_ref = coalesce(nullif(p_payment_ref, ''), payment_ref)
    where code = p_code and status = 'PENDING';
   return found;
 end $$;
@@ -271,20 +283,18 @@ grant execute on function public.check_in(text) to authenticated;
 -- Supabase → Authentication → Users → Add user, with "Auto Confirm User" ticked.
 
 -- ---------------------------------------------------------------- merchant SMS payments
-alter table public.settings add column if not exists mtn_merchant_code text not null default '89713371';
-alter table public.settings add column if not exists mtn_merchant_name text not null default 'TANK Promotions';
-alter table public.settings add column if not exists airtel_merchant_code text not null default '7280543';
-alter table public.settings add column if not exists airtel_merchant_name text not null default 'TANK Promotions';
-alter table public.settings add column if not exists sms_secret text not null default 'tank2026secret';
-
--- ensure existing row has the defaults populated if blank
+alter table public.settings add column if not exists mtn_merchant_code text not null default '';
+alter table public.settings add column if not exists mtn_merchant_name text not null default '';
+alter table public.settings add column if not exists airtel_merchant_code text not null default '';
+alter table public.settings add column if not exists airtel_merchant_name text not null default '';
+alter table public.settings add column if not exists sms_secret text not null default '';
 update public.settings
-   set mtn_merchant_code = case when mtn_merchant_code = '' or mtn_merchant_code = '7185040' then '89713371' else mtn_merchant_code end,
-       mtn_merchant_name = case when mtn_merchant_name = '' then 'TANK Promotions' else mtn_merchant_name end,
-       airtel_merchant_code = case when airtel_merchant_code = '' or airtel_merchant_code = '7185040' then '7280543' else airtel_merchant_code end,
-       airtel_merchant_name = case when airtel_merchant_name = '' then 'TANK Promotions' else airtel_merchant_name end,
-       sms_secret = case when sms_secret = '' then 'tank2026secret' else sms_secret end
- where id = 1;
+set airtel_merchant_code = '7280543'
+where id = 1 and coalesce(airtel_merchant_code, '') in ('', '7185040');
+
+update public.settings
+set mtn_merchant_code = '89713371'
+where id = 1 and coalesce(mtn_merchant_code, '') = '';
 
 drop policy if exists "settings read" on public.settings;
 create policy "settings read" on public.settings for select using (is_admin());
@@ -299,9 +309,7 @@ language sql stable security definer set search_path = public as $$
     'mtn_merchant_code', mtn_merchant_code,
     'mtn_merchant_name', mtn_merchant_name,
     'airtel_merchant_code', airtel_merchant_code,
-    'airtel_merchant_name', airtel_merchant_name,
-    'simulate', simulate,
-    'zenga_env', zenga_env
+    'airtel_merchant_name', airtel_merchant_name
   ) from settings where id = 1;
 $$;
 
@@ -310,82 +318,73 @@ returns json
 language plpgsql security definer set search_path = public as $$
 declare
   sec text;
+  compact text;
+  flat text;
   amt integer;
   ref text;
-  tid text;
   payer text;
-  raw_phone text;
+  tid text;
+  provider_ref text;
+  sms_payment_ref text;
   n integer;
   hit orders;
+  updated orders;
 begin
   select sms_secret into sec from settings where id = 1;
-  if sec is null or length(sec) < 6 or p_secret is distinct from sec then
+  if sec is null or length(sec) < 8 or p_secret is distinct from sec then
     return json_build_object('ok', false, 'message', 'Wrong confirmation key.');
   end if;
 
-  -- 1. Amount: handles UGX 500, UGX 50,000, UGX500, etc.
-  amt := substring(replace(coalesce(p_text, ''), ',', '') from '(?i)UGX[[:space:]]*([0-9]+)')::integer;
+  compact := regexp_replace(coalesce(p_text, ''), '[[:space:]]+', ' ', 'g');
+  flat := regexp_replace(compact, '[[:space:]-]', '', 'g');
+  amt := substring(replace(compact, ',', '') from '\mUGX[[:space:]]*([0-9]{1,9})\M')::integer;
   if amt is null then
     return json_build_object('ok', false, 'message', 'That message has no UGX amount, so it was ignored.');
   end if;
 
-  -- 2. Transaction ID (TID)
-  tid := substring(coalesce(p_text, '') from '(?i)(?:TID|TxId|Trans[[:space:]]*ID|Id)[[:space:]:]*([A-Za-z0-9]+)');
+  ref := substring(upper(compact) from '\mTNK-?([A-Z0-9]{6,12})\M');
+  if ref is not null then ref := 'TNK-' || ref; end if;
 
-  -- 3. Ticket code (e.g. TNK-ABCDEF12)
-  ref := substring(upper(coalesce(p_text, '')) from 'TNK-?[A-Z0-9]{6,10}');
-  if ref is not null then
-    ref := 'TNK-' || replace(replace(ref, 'TNK-', ''), 'TNK', '');
-  end if;
+  payer := substring(flat from 'from:?(?:\+?256|0)?(7[0-9]{8})');
+  if payer is not null then payer := '256' || payer; end if;
 
-  -- 4. Payer phone number: matches 2567XXXXXXXX, 07XXXXXXXX, or 7XXXXXXXX (9 digits)
-  raw_phone := substring(replace(replace(coalesce(p_text, ''), ' ', ''), '-', '') from '(?i)(?:from|sender:)?(2567[0-9]{8}|07[0-9]{8}|7[0-9]{8})');
-  if raw_phone is not null then
-    if raw_phone like '256%' then
-      payer := raw_phone;
-    elsif raw_phone like '07%' then
-      payer := '256' || substring(raw_phone from 2);
-    elsif raw_phone like '7%' and length(raw_phone) = 9 then
-      payer := '256' || raw_phone;
+  tid := substring(upper(compact) from '\mTID[:#-]?[[:space:]]*([A-Z0-9]{6,})\M');
+  provider_ref := substring(upper(compact) from '\mREFERENCE[:#-]?[[:space:]]*([A-Z0-9]{6,})\M');
+  sms_payment_ref := case when tid is not null then 'TID:' || tid when provider_ref is not null then 'REF:' || provider_ref else null end;
+
+  if sms_payment_ref is not null then
+    select * into hit from orders where payment_ref = sms_payment_ref limit 1;
+    if found then
+      return json_build_object('ok', true, 'message', 'This payment was already processed.', 'code', hit.code);
     end if;
   end if;
 
-  -- Priority 1: match by ticket code
-  if ref is not null then
-    select count(*) into n from orders
-    where status = 'PENDING' and amt >= amount and replace(code, '-', '') = replace(ref, '-', '');
-    if n = 1 then
-      select * into hit from orders
-      where status = 'PENDING' and amt >= amount and replace(code, '-', '') = replace(ref, '-', '')
-      limit 1;
-    end if;
+  select count(*) into n from orders
+  where status = 'PENDING' and amount = amt
+    and created_at between now() - interval '30 minutes' and now() + interval '5 minutes'
+    and (
+      (ref is not null and replace(code, '-', '') = replace(ref, '-', ''))
+      or (ref is null and payer is not null and phone = payer)
+    );
+  if n <> 1 then
+    return json_build_object('ok', false, 'message', 'No single waiting payment matches that number and exact amount.');
   end if;
 
-  -- Priority 2: match by payer phone number within the last 45 minutes
-  if hit.id is null and payer is not null then
-    select count(*) into n from orders
-    where status = 'PENDING' and amt >= amount and phone = payer
-      and created_at > now() - interval '45 minutes';
-    if n = 1 then
-      select * into hit from orders
-      where status = 'PENDING' and amt >= amount and phone = payer
-        and created_at > now() - interval '45 minutes'
-      limit 1;
-    elsif n > 1 then
-      return json_build_object('ok', false, 'message', 'Multiple pending orders found for this phone number.');
-    end if;
+  select * into hit from orders
+  where status = 'PENDING' and amount = amt
+    and created_at between now() - interval '30 minutes' and now() + interval '5 minutes'
+    and (
+      (ref is not null and replace(code, '-', '') = replace(ref, '-', ''))
+      or (ref is null and payer is not null and phone = payer)
+    )
+  order by created_at asc limit 1;
+
+  update orders set status = 'SUCCEEDED', payment_ref = coalesce(sms_payment_ref, 'SMS')
+  where id = hit.id and status = 'PENDING' returning * into updated;
+  if not found then
+    return json_build_object('ok', false, 'message', 'This payment was already handled by another confirmation.');
   end if;
-
-  if hit.id is null then
-    return json_build_object('ok', false, 'message', 'No pending order matches this SMS (amount UGX ' || amt || coalesce(', phone ' || payer, '') || ').');
-  end if;
-
-  update orders
-     set status = 'SUCCEEDED',
-         zenga_ref = coalesce(tid, 'SMS')
-   where id = hit.id and status = 'PENDING';
-
-  return json_build_object('ok', true, 'message', 'Ticket issued for ' || hit.name || ' (UGX ' || amt || ').', 'code', hit.code, 'tid', tid);
+  return json_build_object('ok', true, 'message', 'Ticket issued for ' || hit.name || '.', 'code', hit.code);
 end $$;
 
 grant execute on function public.storefront_settings() to anon, authenticated;

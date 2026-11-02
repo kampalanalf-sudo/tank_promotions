@@ -2,7 +2,7 @@ import emailjs from "@emailjs/browser";
 import QRCode from "qrcode";
 import { eventWhen, ugx } from "./format";
 import type { Order, Settings, TankEvent } from "./types";
-import { toMsisdn } from "./zengapay";
+import { toMsisdn } from "./phone";
 
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 

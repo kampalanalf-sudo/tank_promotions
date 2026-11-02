@@ -45,7 +45,7 @@ export type Order = {
   qty: number;
   amount: number;
   status: OrderStatus;
-  zengaRef: string;
+  paymentRef: string;
   externalRef: string;
   createdAt: string;
 };
@@ -73,9 +73,6 @@ export type Brief = {
 };
 
 export type Settings = {
-  zengaEnv: "sandbox" | "production";
-  zengaToken: string;
-  simulate: boolean;
   emailServiceId: string;
   emailTemplateId: string;
   emailPublicKey: string;
@@ -87,9 +84,6 @@ export type Settings = {
 };
 
 export const DEFAULT_SETTINGS: Settings = {
-  zengaEnv: "sandbox",
-  zengaToken: "",
-  simulate: false,
   emailServiceId: "",
   emailTemplateId: "",
   emailPublicKey: "",
@@ -97,7 +91,7 @@ export const DEFAULT_SETTINGS: Settings = {
   mtnMerchantName: "TANK Promotions",
   airtelMerchantCode: "7280543",
   airtelMerchantName: "TANK Promotions",
-  smsSecret: "tank2026secret",
+  smsSecret: "",
 };
 
 export const EVENT_TYPES = ["Nightlife", "Live music", "Dining", "Party", "Festival", "Sports", "Conference", "Activation", "Other"];

@@ -78,4 +78,9 @@ git push origin deploy
 
 ## Payments
 
-Payments start in **test mode** (no money taken). The ZengaPay token is sent to the buyer's browser, so only use a sandbox token on this static site. Real payments need a small server, such as a Supabase Edge Function, that keeps the token secret and confirms payments from ZengaPay's callback.
+Buyers pay the MTN or Airtel merchant code shown at checkout. The merchant phone receives a confirmation SMS, and an automation app such as MacroDroid opens the private TANK SMS trigger link. TANK matches the payer number and exact amount, then issues the ticket.
+
+1. In **Admin → Payments**, save the merchant codes and generate the SMS confirmation key.
+2. In **Admin → SMS**, copy the trigger link.
+3. On the merchant phone, create a MacroDroid macro: **SMS Received** → **Open Website** with that link. Keep `{sms_message}` in the link so the SMS body is sent.
+4. Keep the confirmation key private. Automatic matching across devices requires the Supabase database to be connected.

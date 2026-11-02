@@ -14,7 +14,7 @@ import {
   type TicketPayload,
 } from "./lib/tickets";
 import { EVENT_TYPES, type EventInput, type Order, type Session, type Settings, type TankEvent } from "./lib/types";
-import { isValidUgPhone } from "./lib/zengapay";
+import { isValidUgPhone } from "./lib/phone";
 
 /** Round TANK emblem. Falls back to the hosted logo, then to the letters "TP". */
 export function LogoMark({ size }: { size?: number }) {

@@ -6,7 +6,7 @@ import { api } from "./lib/api";
 import { eventWhen, ugx } from "./lib/format";
 import { emailConfigured, newTicketCode, payloadFor } from "./lib/tickets";
 import type { Order, Session, Settings, TankEvent } from "./lib/types";
-import { detectNetwork, isValidUgPhone, toMsisdn } from "./lib/zengapay";
+import { detectNetwork, isValidUgPhone, toMsisdn } from "./lib/phone";
 
 type Step = "qty" | "details" | "pay" | "done";
 
@@ -28,7 +28,7 @@ export function Checkout({
   const [step, setStep] = useState<Step>("qty");
   const [qty, setQty] = useState(1);
   const [name, setName] = useState(session?.name || "");
-  const [phone, setPhone] = useState(session?.phone || "");
+  const [phone, setPhone] = useState("");
   const [email, setEmail] = useState(session?.email || "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -86,7 +86,7 @@ export function Checkout({
       if (stopped) return;
       const status = await api.ticketStatus(order.code).catch(() => null);
       if (status === "SUCCEEDED" || status === "CHECKED_IN") return finish(order);
-      if (Date.now() - started > 20 * 60e3) return;
+      if (Date.now() - started > 30 * 60e3) return;
       setTimeout(tick, 3000);
     };
     tick();
@@ -155,9 +155,10 @@ export function Checkout({
                 <label className="label">Full name
                   <input className="field" value={name} onChange={(e) => setName(e.target.value)} required maxLength={80} autoComplete="name" />
                 </label>
-                <label className="label">{free ? "WhatsApp number" : "MTN / Airtel number (pays and receives the ticket)"}
+                <label className="label">{free ? "WhatsApp number" : "Number you will pay from"}
                   <input className="field" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} required placeholder="0772 123456" autoComplete="tel" />
                 </label>
+                {!free && <p className="-mt-1 text-xs leading-5 text-black/50">Use the MTN or Airtel number that sends the money. We match the confirmation SMS by this number and the exact amount.</p>}
                 {phone && isValidUgPhone(phone) && !free && <p className="-mt-1 text-xs uppercase tracking-widest text-black/45">{detectNetwork(phone)} Mobile Money</p>}
                 <label className="label">Email {emailOn ? "" : "(optional)"}
                   <input className="field" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required={emailOn} autoComplete="email" />
@@ -193,102 +194,28 @@ function PayInstructions({
   copied: string;
   onCopy: (value: string, label: string) => void;
 }) {
-  const autoNetwork = detectNetwork(order.phone);
-  const [selectedNetwork, setSelectedNetwork] = useState<"MTN" | "Airtel">(
-    autoNetwork === "Airtel" ? "Airtel" : "MTN",
-  );
-
-  const merchantCode =
-    selectedNetwork === "Airtel"
-      ? settings.airtelMerchantCode || "7280543"
-      : settings.mtnMerchantCode || "89713371";
-  const merchantName =
-    selectedNetwork === "Airtel"
-      ? settings.airtelMerchantName || "TANK Promotions"
-      : settings.mtnMerchantName || "TANK Promotions";
-  const menu = selectedNetwork === "Airtel" ? "*185*9#" : "*165*3#";
-
+  const network = detectNetwork(order.phone);
+  const merchantCode = network === "Airtel" ? settings.airtelMerchantCode : network === "MTN" ? settings.mtnMerchantCode : settings.mtnMerchantCode || settings.airtelMerchantCode;
+  const merchantName = network === "Airtel" ? settings.airtelMerchantName : settings.mtnMerchantName;
+  const menu = network === "Airtel" ? "*185#" : "*165*3*3#";
   return (
     <div className="mt-7">
-      <div className="flex items-center justify-between">
-        <p className="eyebrow">{selectedNetwork} MoMo Pay</p>
-        <div className="flex gap-1.5">
-          <button
-            type="button"
-            onClick={() => setSelectedNetwork("MTN")}
-            className={`btn-mini ${selectedNetwork === "MTN" ? "bg-black! text-white!" : ""}`}
-          >
-            MTN (89713371)
-          </button>
-          <button
-            type="button"
-            onClick={() => setSelectedNetwork("Airtel")}
-            className={`btn-mini ${selectedNetwork === "Airtel" ? "bg-black! text-white!" : ""}`}
-          >
-            Airtel (7280543)
-          </button>
-        </div>
+      <p className="eyebrow">{network} merchant</p>
+      <h3 className="display mt-2 text-4xl">Pay, then wait here</h3>
+      <p className="mt-3 text-sm text-black/60">Pay this exact amount from <b>{order.phone}</b> to the merchant code below. This page issues the ticket when the confirmation SMS arrives.</p>
+      <div className="mt-5 grid gap-2 border border-black/12 bg-white/50 p-4 text-sm">
+        <p className="flex justify-between gap-3"><span>Pay</span><b>{ugx(order.amount)}</b></p>
+        <p className="flex justify-between gap-3"><span>Merchant code</span><b>{merchantCode}</b></p>
+        <p className="flex justify-between gap-3"><span>Name</span><b>{merchantName || "TANK Promotions"}</b></p>
+        <p className="flex justify-between gap-3"><span>Reference (optional)</span><b className="tracking-wider">{order.code}</b></p>
       </div>
-
-      <h3 className="display mt-2 text-4xl">Pay & wait for ticket</h3>
-      <p className="mt-2 text-sm text-black/60">
-        Pay <b>{ugx(order.amount)}</b> to the merchant code below. Put reference <b>{order.code}</b> as the reason. Your ticket unlocks automatically when SMS confirms.
-      </p>
-
-      <div className="mt-4 grid gap-2 border border-black/12 bg-white/60 p-4 text-sm">
-        <p className="flex justify-between gap-3">
-          <span>Amount</span>
-          <b className="text-base text-[#c9a227]">{ugx(order.amount)}</b>
-        </p>
-        <p className="flex justify-between gap-3">
-          <span>Merchant Code ({selectedNetwork})</span>
-          <b className="font-mono text-base">{merchantCode}</b>
-        </p>
-        <p className="flex justify-between gap-3">
-          <span>Account Name</span>
-          <b>{merchantName}</b>
-        </p>
-        <p className="flex justify-between gap-3">
-          <span>Reason / Reference</span>
-          <b className="font-mono tracking-wider">{order.code}</b>
-        </p>
-      </div>
-
       <div className="mt-3 flex flex-wrap gap-2">
-        <button
-          type="button"
-          className="btn btn-line"
-          onClick={() => onCopy(merchantCode, "code")}
-        >
-          {copied === "code" ? "Code copied ✓" : `Copy code (${merchantCode})`}
-        </button>
-        <button
-          type="button"
-          className="btn btn-line"
-          onClick={() => onCopy(order.code, "ref")}
-        >
-          {copied === "ref" ? "Reference copied ✓" : "Copy reference"}
-        </button>
-        <a
-          className="btn btn-dark"
-          href={`tel:${menu.replace("#", "%23")}`}
-        >
-          Dial {menu}
-        </a>
+        <button type="button" className="btn btn-line" onClick={() => onCopy(order.code, "ref")}>{copied === "ref" ? "Copied" : "Copy reference"}</button>
+        <a className="btn btn-dark" href={`tel:${menu.replace("#", "%23")}`}>Open {network} menu</a>
       </div>
-
-      <p className="mt-3 text-xs text-black/60">
-        {selectedNetwork === "MTN"
-          ? `Dial *165*3# (MoMoPay) → Enter Merchant Code 89713371 → Enter Amount ${order.amount} → Enter Reference ${order.code} → Enter PIN.`
-          : `Dial *185*9# (Pay Merchant) → Enter Merchant Code 7280543 → Enter Amount ${order.amount} → Enter Reference ${order.code} → Enter PIN.`}
-      </p>
-
-      <div className="mt-4 h-1 overflow-hidden bg-black/10">
-        <div className="progress-bar h-full bg-[#c9a227]" />
-      </div>
-      <p className="mt-2 text-xs uppercase tracking-widest text-black/45">
-        Listening for SMS confirmation… keeping this window open.
-      </p>
+      <p className="mt-4 text-sm text-black/55">Dial {menu}, choose pay merchant, enter code {merchantCode} and amount {order.amount}. If the menu asks for a reason, add {order.code}; otherwise the paying number and amount are enough.</p>
+      <div className="mt-5 h-1 overflow-hidden bg-black/10"><div className="progress-bar h-full bg-[#c9a227]" /></div>
+      <p className="mt-3 text-xs uppercase tracking-widest text-black/45">Waiting for the payment SMS… keep this page open.</p>
     </div>
   );
 }

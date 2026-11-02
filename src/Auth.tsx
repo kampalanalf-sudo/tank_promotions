@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Logo } from "./components";
 import { api, isCloud } from "./lib/api";
 import { ADMIN_EMAIL } from "./lib/config";
-import { isValidUgPhone, toMsisdn } from "./lib/zengapay";
+import { isValidUgPhone, toMsisdn } from "./lib/phone";
 
 type Mode = "login" | "register" | "forgot" | "new-password";
 

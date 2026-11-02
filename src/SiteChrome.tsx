@@ -62,7 +62,7 @@ export function SiteFooter({ session }: { session: Session | null }) {
               else img.style.display = "none";
             }}
           />
-          <p className="mt-4 max-w-sm text-sm text-white/45">TANK Tickets is run by TANK Promotions Co. Ltd, Kampala. Payments by MTN and Airtel Mobile Money through ZengaPay.</p>
+          <p className="mt-4 max-w-sm text-sm text-white/45">TANK Tickets is run by TANK Promotions Co. Ltd, Kampala. Pay by MTN or Airtel merchant code; your ticket is confirmed from the payment SMS.</p>
         </div>
         <div className="grid grid-cols-2 gap-x-12 gap-y-2 text-xs font-bold uppercase tracking-widest text-white/55">
           <a href="#/">Find events</a>
