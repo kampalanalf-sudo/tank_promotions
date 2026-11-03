@@ -46,6 +46,9 @@ export type Order = {
   amount: number;
   status: OrderStatus;
   paymentRef: string;
+  dgatewayRef?: string;
+  provider?: string;
+  providerRef?: string;
   externalRef: string;
   createdAt: string;
 };
@@ -73,6 +76,10 @@ export type Brief = {
 };
 
 export type Settings = {
+  dgatewayApiKey: string;
+  dgatewayWebhookSecret: string;
+  dgatewayApiUrl: string;
+  dgatewayMode: "live" | "test";
   emailServiceId: string;
   emailTemplateId: string;
   emailPublicKey: string;
@@ -84,6 +91,10 @@ export type Settings = {
 };
 
 export const DEFAULT_SETTINGS: Settings = {
+  dgatewayApiKey: "",
+  dgatewayWebhookSecret: "",
+  dgatewayApiUrl: "https://dgatewayapi.desispay.com",
+  dgatewayMode: "test",
   emailServiceId: "",
   emailTemplateId: "",
   emailPublicKey: "",
@@ -91,7 +102,17 @@ export const DEFAULT_SETTINGS: Settings = {
   mtnMerchantName: "TANK Promotions",
   airtelMerchantCode: "7280543",
   airtelMerchantName: "TANK Promotions",
-  smsSecret: "",
+  smsSecret: "tank2026secret",
 };
 
-export const EVENT_TYPES = ["Nightlife", "Live music", "Dining", "Party", "Festival", "Sports", "Conference", "Activation", "Other"];
+export const EVENT_TYPES = [
+  "Nightlife",
+  "Live music",
+  "Dining",
+  "Party",
+  "Festival",
+  "Sports",
+  "Conference",
+  "Activation",
+  "Other",
+];

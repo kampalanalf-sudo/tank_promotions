@@ -1,86 +1,126 @@
-# TANK Tickets – setup
+# TANK Tickets – DGateway & Supabase Setup Guide
 
-The site works in two modes:
+TANK Tickets is integrated with **DGateway** (unified payment gateway for East African Mobile Money — MTN Uganda & Airtel Uganda) and **Supabase** (database, authentication, and secure edge functions).
 
-- **This device only** (no setup): everything is saved in the browser. Good for trying it out. Other people cannot see events or orders.
-- **Online database** (Supabase, free): events, accounts and orders are shared. **You need this for organizers and buyers to use the site for real.**
+---
 
-## 1. Create the database (Supabase)
+## 1. Create the Database (Supabase)
 
-1. Sign up at https://supabase.com and click **New project** (choose region *Europe (Frankfurt)* or the closest to Uganda).
-2. Open **SQL Editor → New query**, paste everything from `supabase/schema.sql`, and click **Run**.
+1. Sign up / log in at **[https://supabase.com](https://supabase.com)** and create a **New project** (name: `tank-tickets`, region: *Europe (Frankfurt)* or closest to Uganda).
+2. Open **SQL Editor → New query**, copy and paste everything from **`supabase/schema.sql`**, and click **Run**.
 3. Open **Authentication → URL Configuration**:
    - **Site URL:** `https://tanktickets.site`
    - **Redirect URLs:** add `https://tanktickets.site/**`
-4. Leave **Confirm email** switched on (Authentication → Providers → Email). The admin check depends on it. Supabase's built-in email only sends a few messages per hour; for more, add your own SMTP under **Authentication → Emails**.
+4. Leave **Confirm email** switched on (Authentication → Providers → Email).
 
-## 2. Connect the site
+---
 
-1. In Supabase open **Project Settings → API** (or **Connect**). Copy the **Project URL** and the **anon public** key.
-2. In the project folder (`~/tank`), create a file named `.env`:
+## 2. Connect the Site Frontend
 
+1. In Supabase open **Project Settings → API** (or **Connect**). Copy the **Project URL** and the **anon public** key (`eyJ...`).
+2. In your local project folder (`~/tank`), create or edit `.env`:
+
+   ```env
+   VITE_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
+   VITE_SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_KEY
    ```
-   VITE_SUPABASE_URL=https://YOUR-PROJECT.supabase.co
-   VITE_SUPABASE_ANON_KEY=YOUR-ANON-KEY
+
+   *(The anon key is safe for client-side use; Supabase Row Level Security protects your database).*
+
+---
+
+## 3. Deploy Supabase Edge Functions & Configure DGateway
+
+DGateway secrets (`DGATEWAY_API_KEY`, `DGATEWAY_WEBHOOK_SECRET`) live securely in Supabase Edge Functions and are never exposed to the client browser.
+
+### A. Set DGateway Secrets in Supabase
+
+1. Go to **[https://dgatewayadmin.desispay.com](https://dgatewayadmin.desispay.com)**:
+   - Go to **My Apps → [your app] → API Keys** → Generate or copy your API Key (`dgw_test_...` for development, `dgw_live_...` for production).
+   - Go to **My Apps → [your app] → Settings** → scroll to **Webhook Secret** → click Show → Copy.
+2. In your Supabase Dashboard:
+   - Go to **Project Settings → Edge Functions → Secrets** (or using Supabase CLI), and add:
+     - `DGATEWAY_API_KEY` = `dgw_test_...` (or `dgw_live_...`)
+     - `DGATEWAY_WEBHOOK_SECRET` = *(copied from DGateway Settings)*
+     - `DGATEWAY_API_URL` = `https://dgatewayapi.desispay.com`
+     - `APP_URL` = `https://tanktickets.site`
+
+### B. Register Your Webhook URL in DGateway
+
+1. In **[https://dgatewayadmin.desispay.com](https://dgatewayadmin.desispay.com)** → **My Apps → Settings**:
+2. Set the **Webhook URL** to:
+   ```text
+   https://YOUR_PROJECT_REF.supabase.co/functions/v1/dgateway-webhook
    ```
+3. Save changes.
 
-   The anon key is designed to be public; the security rules in `schema.sql` protect the data.
-3. Rebuild and publish (see section 5).
+### C. Deploy Edge Functions (using Supabase CLI)
 
-## 3. Create the admin account
+From your terminal / development environment:
+```bash
+supabase functions deploy dgateway-collect --no-verify-jwt
+supabase functions deploy dgateway-status --no-verify-jwt
+supabase functions deploy dgateway-webhook --no-verify-jwt
+```
 
-The admin desk belongs to **admin@tanktickets.site**. No other account can become admin.
+---
+
+## 4. Create the Admin Account
+
+The admin desk is hardcoded for **`admin@tanktickets.site`**. No other account can access the admin control panel.
 
 1. In Supabase open **Authentication → Users → Add user → Create new user**.
-2. Email `admin@tanktickets.site`, choose a strong password, tick **Auto Confirm User**, and click **Create user**.
-3. On the site, open **https://tanktickets.site/#/admin** and sign in with that email and password.
+2. Email: `admin@tanktickets.site`, set a strong password, and check **Auto Confirm User**.
+3. Open **`https://tanktickets.site/#/admin`** and sign in.
+4. You can also review or update DGateway API keys and webhook settings directly inside **Admin (`#/admin`) → DGateway**.
 
-Do this straight after step 1, and keep **Confirm email** switched on (Authentication → Providers → Email), so nobody else can claim the address. The admin desk is not linked from the public pages; bookmark `#/admin`. To change the admin password later, use **Forgot your password?** on the sign-in page (you need access to that mailbox) or edit the user in Supabase.
+---
 
-## 4. Ticket delivery
+## 5. Automated Ticket Delivery
 
-**WhatsApp:** works without setup. After paying, the buyer taps **Send to WhatsApp**; organizers can send any ticket from their guest list.
+### A. WhatsApp Tickets (Instant)
+Works out of the box with zero configuration! When buyers complete their payment, they tap **Send to WhatsApp** to receive their QR ticket link and code directly in their chat.
 
-**Email (EmailJS, free plan: 200 emails a month):**
+### B. Automated Email Tickets (EmailJS)
+1. Sign up for free at **[https://www.emailjs.com](https://www.emailjs.com)** (free tier includes 200 emails/month).
+2. Create an **Email Service** (e.g. Gmail).
+3. Create an **Email Template** with **To Email:** `{{to_email}}` and content containing:
+   ```text
+   Hi {{to_name}},
 
-1. Sign up at https://www.emailjs.com → **Email Services → Add New Service** (for example Gmail).
-2. **Email Templates → Create New Template**:
-   - **To Email:** `{{to_email}}`
-   - **Subject:** `Your ticket: {{event_title}}`
-   - **Content:**
-     ```
-     Hi {{to_name}},
+   You're going to {{event_title}}!
+   📅 Date: {{event_date}}
+   📍 Venue: {{venue}}
+   🎟️ Tickets: {{qty}} · {{amount}}
 
-     You're going to {{event_title}}.
-     When: {{event_date}}
-     Where: {{venue}}
-     Tickets: {{qty}} · {{amount}}
+   Your Ticket Code: {{ticket_code}}
+   Open your digital QR Ticket: {{ticket_link}}
 
-     Ticket code: {{ticket_code}}
-     Open your QR ticket: {{ticket_link}}
+   Show the QR code at the entrance for scanning.
+   TANK Promotions — Kila Sekunde Ina Hesabu
+   ```
+4. In EmailJS **Account → Security**, add `tanktickets.site` to Allowed Domains.
+5. In **Admin (`#/admin`) → Ticket delivery**, paste your Service ID, Template ID, and Public Key.
 
-     Show the QR code at the door.
-     TANK Promotions
-     ```
-3. **Account → Security:** add `tanktickets.site` to the allowed domains.
-4. On the site go to **Admin → Ticket delivery** and paste the Service ID, Template ID and Public Key.
+---
 
-## 5. Build and publish (Termux)
+## 6. Testing DGateway Payments (Sandbox Mode)
+
+When testing with a `dgw_test_*` API key:
+- At checkout, enter test phone number **`256111777111`** (MTN or Airtel) — DGateway will simulate an instant successful Mobile Money STK push!
+- To test the failure path, enter **`256111777222`**.
+- Webhook events arrive with `X-DGateway-Signature` and are cryptographically verified using HMAC-SHA256 before updating the ticket status to `SUCCEEDED`.
+- Once verified, the live QR ticket unlocks immediately with auto-emailing.
+
+---
+
+## 7. Build and Publish (Termux)
 
 ```bash
 cd ~/tank
 npm run build
-rm -rf docs && cp -r dist docs && touch docs/.nojekyll
-git add -f docs
-git commit -m "Update site"
-git push origin deploy
+rm -rf docs && cp -a dist docs && touch docs/.nojekyll
+git add -A && git add -f docs
+git commit -m "Configure DGateway payment gateway with automated STK push"
+git push origin deploy --force
 ```
-
-## Payments
-
-Buyers pay the MTN or Airtel merchant code shown at checkout. The merchant phone receives a confirmation SMS, and an automation app such as MacroDroid opens the private TANK SMS trigger link. TANK matches the payer number and exact amount, then issues the ticket.
-
-1. In **Admin → Payments**, save the merchant codes and generate the SMS confirmation key.
-2. In **Admin → SMS**, copy the trigger link.
-3. On the merchant phone, create a MacroDroid macro: **SMS Received** → **Open Website** with that link. Keep `{sms_message}` in the link so the SMS body is sent.
-4. Keep the confirmation key private. Automatic matching across devices requires the Supabase database to be connected.

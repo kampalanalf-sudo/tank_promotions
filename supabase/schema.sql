@@ -1,7 +1,6 @@
--- TANK Tickets database
+-- TANK Tickets database with DGateway Unified Payments & Supabase Integration
 -- Paste this whole file into Supabase → SQL Editor → New query → Run.
 -- It is safe to run again (it drops and recreates the functions and policies).
-
 
 -- ---------------------------------------------------------------- tables
 
@@ -44,11 +43,18 @@ create table if not exists public.orders (
   qty integer not null check (qty between 1 and 10),
   amount integer not null check (amount >= 0),
   status text not null default 'PENDING' check (status in ('PENDING', 'SUCCEEDED', 'FAILED', 'CHECKED_IN')),
+  dgateway_ref text not null default '',
+  provider text not null default 'iotec',
+  provider_ref text not null default '',
   payment_ref text not null default '',
+  zenga_ref text not null default '',
   external_ref text not null default '',
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 create index if not exists orders_event_idx on public.orders (event_id);
+create index if not exists orders_dgateway_ref_idx on public.orders (dgateway_ref);
+create index if not exists orders_code_idx on public.orders (code);
 
 create table if not exists public.briefs (
   id uuid primary key default gen_random_uuid(),
@@ -64,27 +70,32 @@ create table if not exists public.briefs (
 
 create table if not exists public.settings (
   id integer primary key default 1 check (id = 1),
+  dgateway_api_key text not null default '',
+  dgateway_webhook_secret text not null default '',
+  dgateway_api_url text not null default 'https://dgatewayapi.desispay.com',
+  dgateway_mode text not null default 'test',
   email_service_id text not null default '',
   email_template_id text not null default '',
-  email_public_key text not null default ''
+  email_public_key text not null default '',
+  mtn_merchant_code text not null default '89713371',
+  mtn_merchant_name text not null default 'TANK Promotions',
+  airtel_merchant_code text not null default '7280543',
+  airtel_merchant_name text not null default 'TANK Promotions',
+  sms_secret text not null default 'tank2026secret'
 );
 insert into public.settings (id) values (1) on conflict (id) do nothing;
 
--- Upgrade older installations to merchant payment references.
+-- Ensure columns exist if updating existing database
+alter table public.orders add column if not exists dgateway_ref text not null default '';
+alter table public.orders add column if not exists provider text not null default 'iotec';
+alter table public.orders add column if not exists provider_ref text not null default '';
 alter table public.orders add column if not exists payment_ref text not null default '';
-do $$
-begin
-  if exists (
-    select 1 from information_schema.columns
-    where table_schema = 'public' and table_name = 'orders' and column_name = 'zenga_ref'
-  ) then
-    execute 'update public.orders set payment_ref = zenga_ref where payment_ref = '''' and zenga_ref <> ''''';
-    execute 'alter table public.orders drop column zenga_ref';
-  end if;
-end $$;
-alter table public.settings drop column if exists zenga_env;
-alter table public.settings drop column if exists zenga_token;
-alter table public.settings drop column if exists simulate;
+alter table public.orders add column if not exists updated_at timestamptz not null default now();
+
+alter table public.settings add column if not exists dgateway_api_key text not null default '';
+alter table public.settings add column if not exists dgateway_webhook_secret text not null default '';
+alter table public.settings add column if not exists dgateway_api_url text not null default 'https://dgatewayapi.desispay.com';
+alter table public.settings add column if not exists dgateway_mode text not null default 'test';
 
 -- ---------------------------------------------------------------- helpers
 
@@ -161,7 +172,7 @@ drop policy if exists "events delete" on public.events;
 create policy "events delete" on public.events for delete to authenticated
   using (owner_id = auth.uid() or is_admin());
 
--- Orders are created and updated only through the functions below.
+-- Orders are created and updated through functions/webhooks or read by owner/admin
 drop policy if exists "orders read" on public.orders;
 create policy "orders read" on public.orders for select using (
   user_id = auth.uid()
@@ -178,7 +189,7 @@ drop policy if exists "briefs admin update" on public.briefs;
 create policy "briefs admin update" on public.briefs for update using (is_admin());
 
 drop policy if exists "settings read" on public.settings;
-create policy "settings read" on public.settings for select using (true);
+create policy "settings read" on public.settings for select using (is_admin());
 drop policy if exists "settings admin write" on public.settings;
 create policy "settings admin write" on public.settings for all using (is_admin()) with check (is_admin());
 
@@ -194,7 +205,7 @@ language sql stable security definer set search_path = public as $$
   group by o.event_id;
 $$;
 
--- Creates an order. Price and availability are checked here, not in the browser.
+-- Creates an order. Price and availability are checked here.
 create or replace function public.create_order(
   p_event_id uuid, p_code text, p_name text, p_phone text, p_email text, p_qty integer, p_external_ref text
 ) returns json
@@ -213,10 +224,10 @@ begin
   if not found then raise exception 'This event is not available.'; end if;
   if ev.starts_at < now() - interval '12 hours' then raise exception 'This event has already happened.'; end if;
 
-  -- Paid tickets plus unpaid ones reserved for the 30-minute SMS matching window.
+  -- Paid tickets plus unpaid ones reserved in the last 15 minutes.
   select coalesce(sum(qty), 0) into taken from orders
   where event_id = ev.id
-    and (status in ('SUCCEEDED', 'CHECKED_IN') or (status = 'PENDING' and created_at > now() - interval '30 minutes'));
+    and (status in ('SUCCEEDED', 'CHECKED_IN') or (status = 'PENDING' and created_at > now() - interval '15 minutes'));
   if taken + p_qty > ev.capacity then raise exception 'Sorry, not enough tickets left.'; end if;
 
   amt := ev.price * p_qty;
@@ -227,16 +238,18 @@ begin
   return row_to_json(r);
 end $$;
 
--- Saves the merchant payment reference / result for a pending order.
--- The SMS trigger uses a private confirmation key; keep that key on the merchant phone.
-create or replace function public.confirm_order(p_code text, p_status text, p_payment_ref text default '')
+-- Updates order with DGateway transaction reference / status
+create or replace function public.confirm_order(p_code text, p_status text, p_zenga_ref text default '')
 returns boolean
 language plpgsql security definer set search_path = public as $$
 begin
   if p_status not in ('PENDING', 'SUCCEEDED', 'FAILED') then raise exception 'Invalid status.'; end if;
   update orders
      set status = p_status,
-         payment_ref = coalesce(nullif(p_payment_ref, ''), payment_ref)
+         dgateway_ref = coalesce(nullif(p_zenga_ref, ''), dgateway_ref),
+         payment_ref = coalesce(nullif(p_zenga_ref, ''), payment_ref),
+         zenga_ref = coalesce(nullif(p_zenga_ref, ''), zenga_ref),
+         updated_at = now()
    where code = p_code and status = 'PENDING';
   return found;
 end $$;
@@ -267,7 +280,7 @@ begin
   if o.status <> 'SUCCEEDED' then
     return json_build_object('ok', false, 'message', 'This ticket has not been paid.', 'order', row_to_json(o));
   end if;
-  update orders set status = 'CHECKED_IN' where id = o.id returning * into o;
+  update orders set status = 'CHECKED_IN', updated_at = now() where id = o.id returning * into o;
   return json_build_object('ok', true, 'message', 'Welcome ' || o.name || ' · ' || o.qty || ' guest(s)', 'order', row_to_json(o));
 end $$;
 
@@ -278,27 +291,7 @@ grant execute on function public.ticket_status(text) to anon, authenticated;
 revoke execute on function public.check_in(text) from public, anon;
 grant execute on function public.check_in(text) to authenticated;
 
--- ---------------------------------------------------------------- admin account
--- The admin is admin@tanktickets.site (see is_admin above). Create it in
--- Supabase → Authentication → Users → Add user, with "Auto Confirm User" ticked.
-
--- ---------------------------------------------------------------- merchant SMS payments
-alter table public.settings add column if not exists mtn_merchant_code text not null default '';
-alter table public.settings add column if not exists mtn_merchant_name text not null default '';
-alter table public.settings add column if not exists airtel_merchant_code text not null default '';
-alter table public.settings add column if not exists airtel_merchant_name text not null default '';
-alter table public.settings add column if not exists sms_secret text not null default '';
-update public.settings
-set airtel_merchant_code = '7280543'
-where id = 1 and coalesce(airtel_merchant_code, '') in ('', '7185040');
-
-update public.settings
-set mtn_merchant_code = '89713371'
-where id = 1 and coalesce(mtn_merchant_code, '') = '';
-
-drop policy if exists "settings read" on public.settings;
-create policy "settings read" on public.settings for select using (is_admin());
-
+-- Safe public storefront settings (secrets remain protected)
 create or replace function public.storefront_settings()
 returns json
 language sql stable security definer set search_path = public as $$
@@ -306,6 +299,7 @@ language sql stable security definer set search_path = public as $$
     'email_service_id', email_service_id,
     'email_template_id', email_template_id,
     'email_public_key', email_public_key,
+    'dgateway_mode', coalesce(nullif(dgateway_mode, ''), 'test'),
     'mtn_merchant_code', mtn_merchant_code,
     'mtn_merchant_name', mtn_merchant_name,
     'airtel_merchant_code', airtel_merchant_code,
@@ -313,79 +307,4 @@ language sql stable security definer set search_path = public as $$
   ) from settings where id = 1;
 $$;
 
-create or replace function public.apply_payment_sms(p_secret text, p_text text)
-returns json
-language plpgsql security definer set search_path = public as $$
-declare
-  sec text;
-  compact text;
-  flat text;
-  amt integer;
-  ref text;
-  payer text;
-  tid text;
-  provider_ref text;
-  sms_payment_ref text;
-  n integer;
-  hit orders;
-  updated orders;
-begin
-  select sms_secret into sec from settings where id = 1;
-  if sec is null or length(sec) < 8 or p_secret is distinct from sec then
-    return json_build_object('ok', false, 'message', 'Wrong confirmation key.');
-  end if;
-
-  compact := regexp_replace(coalesce(p_text, ''), '[[:space:]]+', ' ', 'g');
-  flat := regexp_replace(compact, '[[:space:]-]', '', 'g');
-  amt := substring(replace(compact, ',', '') from '\mUGX[[:space:]]*([0-9]{1,9})\M')::integer;
-  if amt is null then
-    return json_build_object('ok', false, 'message', 'That message has no UGX amount, so it was ignored.');
-  end if;
-
-  ref := substring(upper(compact) from '\mTNK-?([A-Z0-9]{6,12})\M');
-  if ref is not null then ref := 'TNK-' || ref; end if;
-
-  payer := substring(flat from 'from:?(?:\+?256|0)?(7[0-9]{8})');
-  if payer is not null then payer := '256' || payer; end if;
-
-  tid := substring(upper(compact) from '\mTID[:#-]?[[:space:]]*([A-Z0-9]{6,})\M');
-  provider_ref := substring(upper(compact) from '\mREFERENCE[:#-]?[[:space:]]*([A-Z0-9]{6,})\M');
-  sms_payment_ref := case when tid is not null then 'TID:' || tid when provider_ref is not null then 'REF:' || provider_ref else null end;
-
-  if sms_payment_ref is not null then
-    select * into hit from orders where payment_ref = sms_payment_ref limit 1;
-    if found then
-      return json_build_object('ok', true, 'message', 'This payment was already processed.', 'code', hit.code);
-    end if;
-  end if;
-
-  select count(*) into n from orders
-  where status = 'PENDING' and amount = amt
-    and created_at between now() - interval '30 minutes' and now() + interval '5 minutes'
-    and (
-      (ref is not null and replace(code, '-', '') = replace(ref, '-', ''))
-      or (ref is null and payer is not null and phone = payer)
-    );
-  if n <> 1 then
-    return json_build_object('ok', false, 'message', 'No single waiting payment matches that number and exact amount.');
-  end if;
-
-  select * into hit from orders
-  where status = 'PENDING' and amount = amt
-    and created_at between now() - interval '30 minutes' and now() + interval '5 minutes'
-    and (
-      (ref is not null and replace(code, '-', '') = replace(ref, '-', ''))
-      or (ref is null and payer is not null and phone = payer)
-    )
-  order by created_at asc limit 1;
-
-  update orders set status = 'SUCCEEDED', payment_ref = coalesce(sms_payment_ref, 'SMS')
-  where id = hit.id and status = 'PENDING' returning * into updated;
-  if not found then
-    return json_build_object('ok', false, 'message', 'This payment was already handled by another confirmation.');
-  end if;
-  return json_build_object('ok', true, 'message', 'Ticket issued for ' || hit.name || '.', 'code', hit.code);
-end $$;
-
 grant execute on function public.storefront_settings() to anon, authenticated;
-grant execute on function public.apply_payment_sms(text, text) to anon, authenticated;

@@ -166,9 +166,9 @@ export default function Home({ session }: { session: Session | null }) {
           <h2 className="display text-4xl md:text-6xl">Ticket in three steps.</h2>
           <div className="mt-8 grid gap-4 md:grid-cols-3">
             {[
-              [Ticket, "Pick your event", "Choose an event and how many tickets you need."],
-              [Smartphone, "Pay with Mobile Money", "Approve the MTN or Airtel prompt with your PIN. Free events need no payment."],
-              [QrCode, "Show your QR at the door", "Your ticket arrives by email and WhatsApp, and is saved in My tickets."],
+              [Ticket, "Choose your tickets", "Select your event, choose how many tickets you need, and enter your MTN or Airtel phone number."],
+              [Smartphone, "Approve prompt on phone", "A direct Mobile Money STK prompt appears on your phone screen — simply enter your PIN to authorize payment."],
+              [QrCode, "Get your QR ticket instantly", "Your QR code ticket unlocks immediately on screen, is emailed to you, and can be saved to WhatsApp."],
             ].map(([Icon, t, d], i) => {
               const I = Icon as typeof Ticket;
               return (

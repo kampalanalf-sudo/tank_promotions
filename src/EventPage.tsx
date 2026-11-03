@@ -115,7 +115,20 @@ export default function EventPage({ id, session, settings }: { id: string; sessi
             </div>
             <div className="mt-4 h-1.5 bg-black/10"><div className="h-full bg-[#c9a227]" style={{ width: `${soldPct}%` }} /></div>
             <button onClick={() => setBuying(true)} disabled={!canBuy} className="btn btn-gold mt-5 w-full text-sm disabled:opacity-45"><Ticket size={17} /> {buyLabel}</button>
-            <p className="mt-3 text-center text-xs text-black/45">{event.price === 0 ? "Free entry · QR ticket by email & WhatsApp" : "Pay with MTN or Airtel Mobile Money · QR ticket by email & WhatsApp"}</p>
+            <div className="mt-3 text-center text-xs text-black/60">
+              {event.price === 0 ? (
+                <p>Free entry · Instant QR ticket by email & WhatsApp</p>
+              ) : (
+                <div className="space-y-1">
+                  <p className="font-bold text-black/80">
+                    Pay with MTN or Airtel Mobile Money · Direct prompt to your phone
+                  </p>
+                  <p className="text-[11px] text-black/50">
+                    Instant QR ticket issued automatically to Email & WhatsApp
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="mt-4 grid grid-cols-2 gap-2">

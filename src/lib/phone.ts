@@ -1,3 +1,5 @@
+/** Uganda phone number utilities */
+
 export function toMsisdn(input: string) {
   const d = input.replace(/\D/g, "");
   if (d.startsWith("256") && d.length >= 12) return d.slice(0, 12);
@@ -7,12 +9,21 @@ export function toMsisdn(input: string) {
 }
 
 export function isValidUgPhone(input: string) {
-  return /^2567\d{8}$/.test(toMsisdn(input));
+  const msisdn = toMsisdn(input);
+  // Standard Uganda mobile: 2567XXXXXXXX (12 digits)
+  if (/^2567\d{8}$/.test(msisdn)) return true;
+  // DGateway sandbox test phone numbers
+  if (msisdn === "256111777111" || msisdn === "256111777222") return true;
+  return false;
 }
 
 export function detectNetwork(msisdn: string): "MTN" | "Airtel" | "Other" {
-  const n = toMsisdn(msisdn).slice(3, 5);
-  if (["77", "78", "76", "79"].includes(n)) return "MTN";
+  const normalized = toMsisdn(msisdn);
+  if (normalized === "256111777111" || normalized === "256111777222") {
+    return "MTN";
+  }
+  const n = normalized.slice(3, 5);
+  if (["77", "78", "76", "79", "39"].includes(n)) return "MTN";
   if (["70", "75", "74"].includes(n)) return "Airtel";
   return "Other";
 }

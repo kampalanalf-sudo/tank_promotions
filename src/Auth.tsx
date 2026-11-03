@@ -109,9 +109,7 @@ export function AuthScreen({ mode, next = "/dashboard" }: { mode: Mode; next?: s
               </>
             )}
             {mode !== "login" && <p>Already have an account? <a href="#/login" className="text-[#c9a227]">Sign in</a></p>}
-            {mode === "register" && !isCloud && (
-              <p className="text-xs text-white/35">This site is not connected to its online database yet, so accounts are saved on this device only.</p>
-            )}
+
           </div>
         </form>
       </div>

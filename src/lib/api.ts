@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { ADMIN_EMAIL, SUPABASE_ANON_KEY, SUPABASE_URL } from "./config";
-import { parsePaymentSms, smsAlreadyApplied, smsMatchesOrder } from "./sms";
+import { parsePaymentSms, smsMatchesOrder } from "./sms";
 import {
   DEFAULT_SETTINGS,
   type Brief,
@@ -73,7 +73,10 @@ function rowToOrder(r: any): Order {
     qty: r.qty,
     amount: r.amount,
     status: r.status,
-    paymentRef: r.payment_ref ?? r.zenga_ref ?? "",
+    paymentRef: r.dgateway_ref || r.payment_ref || r.zenga_ref || "",
+    dgatewayRef: r.dgateway_ref || "",
+    provider: r.provider || "iotec",
+    providerRef: r.provider_ref || "",
     externalRef: r.external_ref || "",
     createdAt: r.created_at,
   };
@@ -86,14 +89,18 @@ function rowToBrief(r: any): Brief {
 function rowToSettings(r: any): Settings {
   if (!r) return { ...DEFAULT_SETTINGS };
   return {
+    dgatewayApiKey: r.dgateway_api_key || "",
+    dgatewayWebhookSecret: r.dgateway_webhook_secret || "",
+    dgatewayApiUrl: r.dgateway_api_url || "https://dgatewayapi.desispay.com",
+    dgatewayMode: r.dgateway_mode === "live" ? "live" : "test",
     emailServiceId: r.email_service_id || "",
     emailTemplateId: r.email_template_id || "",
     emailPublicKey: r.email_public_key || "",
-    mtnMerchantCode: r.mtn_merchant_code || "",
-    mtnMerchantName: r.mtn_merchant_name || "",
-    airtelMerchantCode: r.airtel_merchant_code || "",
-    airtelMerchantName: r.airtel_merchant_name || "",
-    smsSecret: r.sms_secret || "",
+    mtnMerchantCode: r.mtn_merchant_code || "89713371",
+    mtnMerchantName: r.mtn_merchant_name || "TANK Promotions",
+    airtelMerchantCode: r.airtel_merchant_code || "7280543",
+    airtelMerchantName: r.airtel_merchant_name || "TANK Promotions",
+    smsSecret: r.sms_secret || "tank2026secret",
   };
 }
 
@@ -143,18 +150,10 @@ function write<T>(key: string, value: T) {
   localStorage.setItem(key, JSON.stringify(value));
 }
 
-/** Reads orders and upgrades any old local payment-reference field. */
-function readOrders(): Order[] {
-  return read<Array<Order & { zengaRef?: string }>>(K.orders, []).map((o) => ({
-    ...o,
-    paymentRef: o.paymentRef ?? o.zengaRef ?? "",
-  }));
-}
-
 type LocalEvent = Omit<TankEvent, "sold">;
 
 function localSold(eventId: string) {
-  return readOrders()
+  return read<Order[]>(K.orders, [])
     .filter((o) => o.eventId === eventId && PAID.includes(o.status))
     .reduce((s, o) => s + o.qty, 0);
 }
@@ -344,7 +343,7 @@ export const api = {
       return;
     }
     write(K.events, read<LocalEvent[]>(K.events, []).filter((e) => e.id !== id));
-    write(K.orders, readOrders().filter((o) => o.eventId !== id));
+    write(K.orders, read<Order[]>(K.orders, []).filter((o) => o.eventId !== id));
   },
 
   /* ---------- orders ---------- */
@@ -382,20 +381,20 @@ export const api = {
       externalRef: input.externalRef,
       createdAt: new Date().toISOString(),
     };
-    write(K.orders, [order, ...readOrders()]);
+    write(K.orders, [order, ...read<Order[]>(K.orders, [])]);
     return order;
   },
 
-  /** Records the merchant payment reference (status PENDING) or the final payment result. */
+  /** Records the payment reference / TID (status PENDING/SUCCEEDED). */
   async confirmOrder(code: string, status: "PENDING" | "SUCCEEDED" | "FAILED", paymentRef = "") {
     if (cloud) {
-      const { error } = await cloud.rpc("confirm_order", { p_code: code, p_status: status, p_payment_ref: paymentRef });
+      const { error } = await cloud.rpc("confirm_order", { p_code: code, p_status: status, p_zenga_ref: paymentRef });
       fail(error);
       return;
     }
     write(
       K.orders,
-      readOrders().map((o) =>
+      read<Order[]>(K.orders, []).map((o) =>
         o.code === code && o.status === "PENDING" ? { ...o, status, paymentRef: paymentRef || o.paymentRef } : o,
       ),
     );
@@ -413,7 +412,7 @@ export const api = {
       fail(error);
       return (data || []).map(rowToOrder);
     }
-    const rows = readOrders();
+    const rows = read<Order[]>(K.orders, []);
     if ("eventIds" in scope) return rows.filter((o) => scope.eventIds.includes(o.eventId));
     if ("mine" in scope) return rows.filter((o) => o.userId === scope.mine.userId || (o.email && o.email === scope.mine.email));
     return rows;
@@ -424,7 +423,7 @@ export const api = {
       const { data } = await cloud.rpc("ticket_status", { p_code: code });
       return (data as OrderStatus | null) || null;
     }
-    return readOrders().find((o) => o.code === code)?.status || null;
+    return read<Order[]>(K.orders, []).find((o) => o.code === code)?.status || null;
   },
 
   async checkIn(code: string, session: Session): Promise<CheckInResult> {
@@ -434,7 +433,7 @@ export const api = {
       const res = data as { ok: boolean; message: string; order?: any };
       return { ok: res.ok, message: res.message, order: res.order ? rowToOrder(res.order) : undefined };
     }
-    const orders = readOrders();
+    const orders = read<Order[]>(K.orders, []);
     const order = orders.find((o) => o.code === code);
     if (!order) return { ok: false, message: "No ticket with that code." };
     const event = read<LocalEvent[]>(K.events, []).find((e) => e.id === order.eventId);
@@ -481,18 +480,17 @@ export const api = {
       const pub = await cloud.rpc("storefront_settings");
       return rowToSettings(pub.data);
     }
-    const local = { ...DEFAULT_SETTINGS, ...read<Partial<Settings>>(K.settings, {}) };
-    if (!local.airtelMerchantCode || local.airtelMerchantCode === "7185040") {
-      local.airtelMerchantCode = DEFAULT_SETTINGS.airtelMerchantCode;
-    }
-    if (!local.mtnMerchantCode) local.mtnMerchantCode = DEFAULT_SETTINGS.mtnMerchantCode;
-    return local;
+    return { ...DEFAULT_SETTINGS, ...read<Partial<Settings>>(K.settings, {}) };
   },
 
   async saveSettings(s: Settings) {
     if (cloud) {
       const { error } = await cloud.from("settings").upsert({
         id: 1,
+        dgateway_api_key: s.dgatewayApiKey.trim(),
+        dgateway_webhook_secret: s.dgatewayWebhookSecret.trim(),
+        dgateway_api_url: s.dgatewayApiUrl.trim() || "https://dgatewayapi.desispay.com",
+        dgateway_mode: s.dgatewayMode,
         email_service_id: s.emailServiceId.trim(),
         email_template_id: s.emailTemplateId.trim(),
         email_public_key: s.emailPublicKey.trim(),
@@ -525,14 +523,12 @@ export const api = {
 
     const settings = await api.getSettings();
     if (!settings.smsSecret || secret !== settings.smsSecret) return { ok: false, message: "Wrong confirmation key." };
-    const all = readOrders();
-    const prior = smsAlreadyApplied(parsed, all);
-    if (prior) return { ok: true, message: "This payment was already processed.", code: prior.code };
-    const hits = all.filter((o) => smsMatchesOrder(parsed, o));
+    const pending = read<Order[]>(K.orders, []).filter((o) => o.status === "PENDING");
+    const hits = pending.filter((o) => smsMatchesOrder(parsed, o));
     if (hits.length !== 1) {
-      return { ok: false, message: hits.length === 0 ? "No waiting payment matches that number and exact amount." : "More than one waiting payment matches. Ask the buyer to include the TNK reference." };
+      return { ok: false, message: hits.length === 0 ? "No waiting payment matches that SMS." : "More than one waiting payment matches. Add the ticket reference to the reason." };
     }
-    await api.confirmOrder(hits[0].code, "SUCCEEDED", parsed.paymentRef || "SMS");
-    return { ok: true, message: `Ticket issued for ${hits[0].name}.`, code: hits[0].code };
+    await api.confirmOrder(hits[0].code, "SUCCEEDED", parsed.tid || "SMS");
+    return { ok: true, message: `Ticket issued for ${hits[0].name} (UGX ${parsed.amount}).`, code: hits[0].code };
   },
 };

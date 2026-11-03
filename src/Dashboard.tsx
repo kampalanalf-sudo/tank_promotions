@@ -1,7 +1,7 @@
 import { Copy, LogOut, Pencil, Plus, Share2, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DoorPanel, EventForm, Logo, Notice, OrdersTable, Poster, Spinner, StatusPill, TicketCard, emptyEvent, eventSummary } from "./components";
-import { api, isCloud } from "./lib/api";
+import { api } from "./lib/api";
 import { ugx } from "./lib/format";
 import { payloadFor } from "./lib/tickets";
 import type { EventInput, Order, Session, Settings, TankEvent } from "./lib/types";
@@ -104,13 +104,6 @@ export default function Dashboard({ session, settings, initialTab }: { session: 
       <div className="shell py-10">
         <p className="eyebrow">Dashboard</p>
         <h1 className="display mt-2 text-5xl md:text-6xl">Hello, {session.name.split(" ")[0]}.</h1>
-        {!isCloud && (
-          <div className="mt-6">
-            <Notice tone="warn">
-              This site isn't connected to its online database yet, so everything here is saved on <b>this device only</b>. Other people can't see events you add until the database is connected.
-            </Notice>
-          </div>
-        )}
 
         <div className="mt-8 flex gap-2 overflow-x-auto">
           {TABS.map((t) => (
