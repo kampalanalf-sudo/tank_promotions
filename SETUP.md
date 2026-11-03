@@ -66,6 +66,19 @@ After server-verified payment, the QR ticket appears on screen. Buyers can save 
 
 ## Current deployment verification
 
-The public site's former bundle was older than the former `deploy` branch head. The site's configured Supabase project also returned `NOT_FOUND` for `dgateway-collect`, and that project was not exposed by the connected Supabase account. The frontend fix and backend deployment are therefore separate checks: a fresh page build does **not** prove that live collections work. Complete the backend setup above and run a sandbox payment before declaring the payment flow live.
+As of 2026-11-04, the public site is served from `main`, and the TANK Supabase project `xmfvxypioitbsnsbgioq` is connected. The secure checkout migration has been applied, and `dgateway-collect`, `dgateway-status`, and `dgateway-webhook` are deployed and active. `DGATEWAY_API_URL` is configured. A pre-migration backup is stored in the private database schema `tank_private_backup`.
+
+Paid collections are still **not live** until the DGateway app credentials are added as Supabase Edge Function secrets:
+
+- `DGATEWAY_API_KEY`: start with the app's `dgw_test_` key.
+- `DGATEWAY_WEBHOOK_SECRET`: the app's generated webhook signing secret.
+
+Add them in Supabase → Edge Functions → Secrets for this project. Do not paste them into chat, commit them, or store them in the browser/database settings. The webhook URL is:
+
+```text
+https://xmfvxypioitbsnsbgioq.supabase.co/functions/v1/dgateway-webhook
+```
+
+A fresh page build and active Edge Functions do **not** prove that live collections work. Complete the DGateway secrets/webhook setup and run a sandbox payment before declaring the payment flow live.
 
 DGateway API reference: https://dgateway.desispay.com/docs

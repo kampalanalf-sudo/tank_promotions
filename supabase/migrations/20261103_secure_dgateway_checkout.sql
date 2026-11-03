@@ -1,9 +1,23 @@
 -- Run before deploying the new DGateway Edge Functions.
 -- Preserves existing events/orders; removes public manual payment confirmation.
+-- Safe to run again. It upgrades the older ZengaPay orders table to the DGateway shape.
 begin;
 
+alter table public.orders add column if not exists dgateway_ref text not null default '';
+alter table public.orders add column if not exists provider text not null default 'iotec';
+alter table public.orders add column if not exists provider_ref text not null default '';
+alter table public.orders add column if not exists payment_ref text not null default '';
 alter table public.orders add column if not exists collection_started_at timestamptz;
+alter table public.orders add column if not exists updated_at timestamptz not null default now();
+
+create index if not exists orders_event_idx on public.orders (event_id);
+create index if not exists orders_code_idx on public.orders (code);
+create index if not exists orders_dgateway_ref_idx on public.orders (dgateway_ref);
 create index if not exists orders_external_ref_idx on public.orders (external_ref);
+create unique index if not exists orders_external_ref_unique_idx
+  on public.orders (external_ref) where external_ref <> '';
+create unique index if not exists orders_dgateway_ref_unique_idx
+  on public.orders (dgateway_ref) where dgateway_ref <> '';
 
 -- Only server-verified DGateway updates may mark a paid order successful.
 -- Revoke every historical overload, including the old Zenga/SMS parameter names.
