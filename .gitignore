@@ -2,3 +2,9 @@ node_modules
 dist
 .DS_Store
 *.local
+
+# Local secrets. .env.production contains only the public, RLS-protected anon config.
+.env
+.env.*
+!.env.production
+!.env.example

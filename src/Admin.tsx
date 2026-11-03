@@ -1,261 +1,492 @@
-import { Check, LogOut, Plus, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
-import { logout } from "./lib/auth";
-import { db } from "./lib/store";
-import type { Brief, Night, Order, Session, Settings as PaySettings } from "./lib/types";
+import { Check, Copy, ExternalLink, LogOut, Pencil, Trash2, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { DoorPanel, EventForm, Logo, Notice, OrdersTable, Poster, Spinner, eventSummary } from "./components";
+import { EventStatusPill, eventLink } from "./Dashboard";
+import { api } from "./lib/api";
+import { SUPABASE_URL } from "./lib/config";
 import { ugx } from "./lib/format";
+import { emailConfigured } from "./lib/tickets";
+import type { EventInput, Order, Session, Settings, TankEvent } from "./lib/types";
 
-const tabs = ["Overview", "Nights", "Tickets", "Briefs", "Door", "ZengaPay"] as const;
-type Tab = (typeof tabs)[number];
+const TABS = [
+  "Review",
+  "Events",
+  "Orders",
+  "Door",
+  "DGateway",
+  "Ticket delivery",
+] as const;
+type Tab = (typeof TABS)[number];
 
-const emptyNight: Night = {
-  id: 0,
-  day: "01",
-  month: "JUN",
-  date: "Monday, 1 June 2026",
-  title: "",
-  type: "Nightlife",
-  venue: "",
-  area: "Kampala",
-  time: "9:00 PM",
-  price: 20000,
-  image: "event-rooftop.jpg",
-  spots: 40,
-};
+export default function Admin({
+  session,
+  settings,
+  onSettings,
+}: {
+  session: Session;
+  settings: Settings | null;
+  onSettings: (s: Settings) => void;
+}) {
+  const [tab, setTab] = useState<Tab>("Review");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [events, setEvents] = useState<TankEvent[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [editing, setEditing] = useState<EventInput | null>(null);
+  const [form, setForm] = useState<Settings | null>(settings);
+  const [saved, setSaved] = useState("");
+  const [copied, setCopied] = useState("");
 
-export default function Admin({ session }: { session: Session }) {
-  const [tab, setTab] = useState<Tab>("Overview");
-  const [nights, setNights] = useState(db.nights());
-  const [orders, setOrders] = useState(db.orders());
-  const [briefs, setBriefs] = useState(db.briefs());
-  const [settings, setSettings] = useState(db.settings());
-  const [draft, setDraft] = useState<Night | null>(null);
-  const [scan, setScan] = useState("");
-  const [scanMsg, setScanMsg] = useState("");
+  useEffect(() => setForm(settings), [settings]);
 
+  const load = useCallback(async () => {
+    setError("");
+    try {
+      const [ev, or] = await Promise.all([
+        api.listEvents("all", session),
+        api.listOrders({ all: true }),
+      ]);
+      setEvents(ev);
+      setOrders(or);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load admin data.");
+    } finally {
+      setLoading(false);
+    }
+  }, [session]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const pending = events.filter((e) => e.status === "pending");
   const paid = orders.filter((o) => o.status === "SUCCEEDED" || o.status === "CHECKED_IN");
-  const revenue = paid.reduce((s, o) => s + o.amount, 0);
+  const stats = useMemo(
+    () => [
+      {
+        k: `UGX ${paid.reduce((s, o) => s + o.amount, 0).toLocaleString("en-UG")}`,
+        l: "Collected",
+      },
+      { k: String(paid.reduce((s, o) => s + o.qty, 0)), l: "Tickets issued" },
+      {
+        k: String(events.filter((e) => e.status === "published").length),
+        l: "Live events",
+      },
+      { k: String(pending.length), l: "Awaiting review" },
+    ],
+    [paid, events, pending.length]
+  );
 
-  const saveNights = (rows: Night[]) => { setNights(rows); db.saveNights(rows); };
-  const saveOrders = (rows: Order[]) => { setOrders(rows); db.saveOrders(rows); };
-  const saveBriefs = (rows: Brief[]) => { setBriefs(rows); db.saveBriefs(rows); };
+  const act = async (fn: () => Promise<void>) => {
+    try {
+      await fn();
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Action failed.");
+    }
+  };
 
-  const saveDraft = (e: React.FormEvent) => {
+  const saveSettings = async (e: React.FormEvent, label: string) => {
     e.preventDefault();
-    if (!draft) return;
-    const parsed = new Date(draft.date);
-    const months = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
-    const next: Night = {
-      ...draft,
-      id: draft.id || Math.max(0, ...nights.map((n) => n.id)) + 1,
-      day: Number.isNaN(parsed.getTime()) ? draft.day : String(parsed.getDate()).padStart(2, "0"),
-      month: Number.isNaN(parsed.getTime()) ? draft.month : months[parsed.getMonth()],
-    };
-    saveNights(draft.id ? nights.map((n) => (n.id === next.id ? next : n)) : [...nights, next]);
-    setDraft(null);
+    if (!form) return;
+    try {
+      await api.saveSettings(form);
+      onSettings(form);
+      setSaved(label);
+      setTimeout(() => setSaved(""), 2500);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save settings.");
+    }
   };
 
-  const checkIn = () => {
-    const code = scan.trim().toUpperCase();
-    const hit = orders.find((o) => o.code === code);
-    if (!hit) return setScanMsg("No pass with that code.");
-    if (hit.status === "CHECKED_IN") return setScanMsg(`${hit.name} already in.`);
-    if (hit.status !== "SUCCEEDED") return setScanMsg("Payment is not complete.");
-    saveOrders(orders.map((o) => (o.id === hit.id ? { ...o, status: "CHECKED_IN" } : o)));
-    setScanMsg(`${hit.name} · ${hit.qty} guest(s) · ${hit.nightTitle}`);
-    setScan("");
+  const signOut = async () => {
+    await api.signOut();
+    window.location.hash = "/";
+    window.dispatchEvent(new Event("tank-auth"));
   };
 
-  const savePay = (e: React.FormEvent) => {
-    e.preventDefault();
-    db.saveSettings(settings);
-  };
+  const set = <K extends keyof Settings>(k: K, v: Settings[K]) =>
+    form && setForm({ ...form, [k]: v });
 
-  const stats = useMemo(() => [
-    { k: ugx(revenue), l: "Collected" },
-    { k: String(paid.reduce((s, o) => s + o.qty, 0)), l: "Guests paid" },
-    { k: String(nights.length), l: "Nights live" },
-    { k: String(briefs.filter((b) => b.status === "New").length), l: "New briefs" },
-  ], [revenue, paid, nights.length, briefs]);
+  const webhookUrl = SUPABASE_URL
+    ? `${SUPABASE_URL}/functions/v1/dgateway-webhook`
+    : "Connect Supabase to configure payments";
+
+  const copyText = async (text: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(label);
+      setTimeout(() => setCopied(""), 2000);
+    } catch {
+      window.prompt("Copy this:", text);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-[#efe8d8] text-[#0c0c0b]">
-      <header className="sticky top-0 z-20 border-b border-black/10 bg-[#0c0c0b] text-white">
-        <div className="shell flex h-16 items-center justify-between">
-          <a href="#/" className="flex items-center gap-3">
-            <span className="mark"><img src="logo.jpg" alt="" /></span>
-            <span className="wordmark hidden sm:block">TANK ADMIN</span>
-          </a>
-          <div className="flex items-center gap-3 text-xs uppercase tracking-widest text-white/55">
-            <a href="#/" className="hidden sm:inline-flex items-center gap-1 text-[#c9a227]"><LogOut size={14} /> Back to site</a>
-            <span>{session.name}</span>
-            <button onClick={() => { logout(); window.location.hash = "/login"; }} className="inline-flex items-center gap-1 text-[#c9a227]"><LogOut size={14} /> Out</button>
+      <header className="sticky top-0 z-20 bg-[#0c0c0b] text-white">
+        <div className="shell flex h-16 items-center justify-between gap-3">
+          <Logo light label="TANK ADMIN" />
+          <div className="flex items-center gap-4 text-[11px] font-extrabold uppercase tracking-widest">
+            <a href="#/dashboard" className="text-[#c9a227]">
+              My dashboard
+            </a>
+            <a href="#/" className="hidden sm:inline">
+              Site
+            </a>
+            <button
+              onClick={signOut}
+              className="inline-flex items-center gap-1 text-white/70"
+            >
+              <LogOut size={14} /> Out
+            </button>
           </div>
         </div>
       </header>
 
-      <div className="shell grid gap-8 py-8 lg:grid-cols-[220px_1fr]">
+      <div className="shell grid gap-8 py-8 lg:grid-cols-[210px_1fr]">
         <aside className="flex gap-2 overflow-x-auto lg:flex-col">
-          {tabs.map((t) => (
-            <button key={t} onClick={() => setTab(t)} className={`btn shrink-0 justify-start ${tab === t ? "btn-dark" : "btn-line"}`}>{t}</button>
+          {TABS.map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={`btn shrink-0 justify-start px-4 ${
+                tab === t ? "btn-dark" : "btn-line"
+              }`}
+            >
+              {t}
+              {t === "Review" && pending.length > 0 && (
+                <span className="ml-auto grid h-5 min-w-5 place-items-center rounded-full bg-[#c9a227] px-1 text-[10px] text-black">
+                  {pending.length}
+                </span>
+              )}
+            </button>
           ))}
         </aside>
 
-        <section>
-          {tab === "Overview" && (
-            <div>
-              <p className="eyebrow">Desk</p>
-              <h1 className="display mt-2 text-5xl">Campaign control</h1>
-              <div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                {stats.map((s) => (
-                  <div key={s.l} className="border border-black/12 p-5">
-                    <p className="display text-4xl">{s.k}</p>
-                    <p className="mt-2 text-xs uppercase tracking-widest text-black/45">{s.l}</p>
-                  </div>
-                ))}
+        <section className="min-w-0">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {stats.map((s) => (
+              <div key={s.l} className="stat">
+                <p className="display text-3xl">{s.k}</p>
+                <p className="stat-label">{s.l}</p>
               </div>
-              <div className="mt-8 grid gap-3">
-                {orders.slice(0, 6).map((o) => (
-                  <div key={o.id} className="flex items-center justify-between border border-black/10 px-4 py-3 text-sm">
-                    <span>{o.name} · {o.nightTitle}</span>
-                    <b className={o.status === "SUCCEEDED" || o.status === "CHECKED_IN" ? "text-emerald-700" : ""}>{o.status}</b>
-                  </div>
-                ))}
-                {orders.length === 0 && <p className="text-sm text-black/45">No ticket sales yet.</p>}
-              </div>
+            ))}
+          </div>
+          {error && (
+            <div className="mt-4">
+              <Notice tone="error">{error}</Notice>
             </div>
           )}
 
-          {tab === "Nights" && (
-            <div>
-              <div className="flex items-center justify-between">
-                <h1 className="display text-5xl">Nights</h1>
-                <button className="btn btn-gold" onClick={() => setDraft({ ...emptyNight })}><Plus size={16} /> New night</button>
-              </div>
-              {draft && (
-                <form onSubmit={saveDraft} className="mt-6 grid gap-3 border border-black/12 p-5">
-                  <input className="field" placeholder="Title" value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} required />
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <input className="field" placeholder="Venue" value={draft.venue} onChange={(e) => setDraft({ ...draft, venue: e.target.value })} required />
-                    <input className="field" placeholder="Area" value={draft.area} onChange={(e) => setDraft({ ...draft, area: e.target.value })} required />
+          {loading ? (
+            <Spinner />
+          ) : (
+            <div className="mt-8">
+              {tab === "Review" && (
+                <div>
+                  <h1 className="display text-5xl">Events to review</h1>
+                  <div className="mt-6 grid gap-4">
+                    {pending.map((e) => (
+                      <article
+                        key={e.id}
+                        className="grid gap-4 border border-black/12 p-4 sm:grid-cols-[140px_1fr]"
+                      >
+                        <Poster event={e} className="h-36 w-full sm:w-[140px]" />
+                        <div className="min-w-0">
+                          <p className="text-xs uppercase tracking-widest text-black/45">
+                            {e.type} · by {e.organizerName} · {e.organizerPhone}
+                          </p>
+                          <h3 className="display mt-1 text-3xl">{e.title}</h3>
+                          <p className="mt-1 text-sm text-black/55">
+                            {eventSummary(e)}
+                          </p>
+                          <p className="mt-1 text-sm">
+                            {ugx(e.price)} · {e.capacity} tickets
+                          </p>
+                          {e.description && (
+                            <p className="mt-2 line-clamp-3 whitespace-pre-line text-sm text-black/65">
+                              {e.description}
+                            </p>
+                          )}
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <button
+                              className="btn btn-dark"
+                              onClick={() =>
+                                act(() => api.setEventStatus(e.id, "published"))
+                              }
+                            >
+                              <Check size={15} /> Approve
+                            </button>
+                            <button
+                              className="btn btn-line"
+                              onClick={() =>
+                                act(() => api.setEventStatus(e.id, "rejected"))
+                              }
+                            >
+                              <X size={15} /> Reject
+                            </button>
+                            <a
+                              className="btn btn-line"
+                              href={`https://wa.me/${e.organizerPhone.replace(
+                                /\D/g,
+                                ""
+                              )}`}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              WhatsApp organizer
+                            </a>
+                          </div>
+                        </div>
+                      </article>
+                    ))}
+                    {pending.length === 0 && (
+                      <p className="text-sm text-black/45">
+                        Nothing waiting for review.
+                      </p>
+                    )}
                   </div>
-                  <div className="grid gap-3 sm:grid-cols-3">
-                    <input className="field" placeholder="Date label" value={draft.date} onChange={(e) => setDraft({ ...draft, date: e.target.value })} />
-                    <input className="field" placeholder="Time" value={draft.time} onChange={(e) => setDraft({ ...draft, time: e.target.value })} />
-                    <select className="field" value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value })}>
-                      {["Nightlife", "Dining", "Live", "Activation"].map((t) => <option key={t}>{t}</option>)}
-                    </select>
+                </div>
+              )}
+
+              {tab === "Events" && (
+                <div>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <h1 className="display text-5xl">All events</h1>
+                    <a href="#/dashboard/new" className="btn btn-gold">
+                      List a TANK event
+                    </a>
                   </div>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <input className="field" type="number" placeholder="Price UGX" value={draft.price} onChange={(e) => setDraft({ ...draft, price: Number(e.target.value) })} />
-                    <input className="field" type="number" placeholder="Spots" value={draft.spots} onChange={(e) => setDraft({ ...draft, spots: Number(e.target.value) })} />
+                  {editing && (
+                    <div className="mt-6">
+                      <EventForm
+                        initial={editing}
+                        session={session}
+                        onCancel={() => setEditing(null)}
+                        onSaved={() => {
+                          setEditing(null);
+                          void load();
+                        }}
+                      />
+                    </div>
+                  )}
+                  <div className="mt-6 divide-y divide-black/10 border-y border-black/10">
+                    {events.map((e) => (
+                      <div
+                        key={e.id}
+                        className="flex flex-wrap items-center justify-between gap-3 py-4"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <EventStatusPill status={e.status} />
+                            <span className="text-xs text-black/45">
+                              {e.organizerName}
+                            </span>
+                          </div>
+                          <p className="mt-1 font-extrabold">{e.title}</p>
+                          <p className="text-sm text-black/50">
+                            {eventSummary(e)} · {e.sold}/{e.capacity} sold
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <select
+                            className="field w-36 py-2!"
+                            value={e.status}
+                            onChange={(x) =>
+                              act(() =>
+                                api.setEventStatus(
+                                  e.id,
+                                  x.target.value as TankEvent["status"]
+                                )
+                              )
+                            }
+                          >
+                            <option value="published">Live</option>
+                            <option value="pending">In review</option>
+                            <option value="rejected">Not approved</option>
+                          </select>
+                          <a
+                            className="btn-mini"
+                            href={eventLink(e.id)}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Open
+                          </a>
+                          <button
+                            className="btn-mini"
+                            onClick={() => setEditing({ ...e })}
+                          >
+                            <Pencil size={13} />
+                          </button>
+                          <button
+                            className="btn-mini"
+                            onClick={() =>
+                              window.confirm(
+                                `Delete ${e.title} and all its orders?`
+                              ) && act(() => api.deleteEvent(e.id))
+                            }
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                    {events.length === 0 && (
+                      <p className="py-6 text-sm text-black/45">No events yet.</p>
+                    )}
                   </div>
-                  <input className="field" placeholder="Image URL" value={draft.image} onChange={(e) => setDraft({ ...draft, image: e.target.value })} />
-                  <div className="flex gap-2">
-                    <button className="btn btn-dark">Save night</button>
-                    <button type="button" className="btn btn-line" onClick={() => setDraft(null)}>Cancel</button>
+                </div>
+              )}
+
+              {tab === "Orders" && (
+                <div>
+                  <h1 className="display text-5xl">Orders</h1>
+                  <div className="mt-6">
+                    <OrdersTable
+                      orders={orders}
+                      events={events}
+                      settings={settings}
+                    />
                   </div>
+                </div>
+              )}
+
+              {tab === "DGateway" && (
+                <section className="max-w-2xl">
+                  <h1 className="display text-5xl">Mobile Money payments</h1>
+                  <p className="mt-4 text-sm leading-6 text-black/60">
+                    Paid tickets use DGateway. A ticket is issued only after the server verifies the payment.
+                    There is no manual, SMS, or offline payment confirmation.
+                  </p>
+                  <div className="mt-6 rounded border border-black/12 bg-white/60 p-5">
+                    <h2 className="text-xs font-extrabold uppercase tracking-wider">Webhook endpoint</h2>
+                    <p className="mt-2 text-xs leading-5 text-black/60">Register this URL in DGateway → My Apps → Settings.</p>
+                    <div className="mt-3 flex items-center gap-2">
+                      <input className="field min-w-0 font-mono text-xs" readOnly value={webhookUrl} aria-label="DGateway webhook endpoint" />
+                      <button type="button" onClick={() => copyText(webhookUrl, "wh")} className="btn btn-dark shrink-0 px-3 text-xs">
+                        {copied === "wh" ? <Check size={14} /> : <Copy size={14} />} {copied === "wh" ? "Copied" : "Copy"}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-6 rounded border border-amber-500/30 bg-amber-50/70 p-5 text-sm leading-6 text-amber-950">
+                    <h2 className="font-extrabold">Server-side configuration</h2>
+                    <p className="mt-2">Set DGATEWAY_API_KEY, DGATEWAY_WEBHOOK_SECRET and DGATEWAY_API_URL in the Supabase Edge Function secrets for this project. Deploy dgateway-collect, dgateway-status and dgateway-webhook, then run the payment security migration.</p>
+                    <p className="mt-2">Credentials are never entered or saved in this browser. Test and live modes are determined by the server API key, not by a switch on this page.</p>
+                    <a className="mt-3 inline-flex items-center gap-1 font-bold underline" href="https://dgatewayadmin.desispay.com" target="_blank" rel="noreferrer">Open DGateway <ExternalLink size={13} /></a>
+                  </div>
+                </section>
+              )}
+
+              {tab === "Ticket delivery" && form && (
+                <form
+                  onSubmit={(e) => saveSettings(e, "email")}
+                  className="max-w-2xl"
+                >
+                  <h1 className="display text-5xl">Ticket delivery</h1>
+                  <div className="mt-4">
+                    {emailConfigured(form) ? (
+                      <Notice tone="ok">
+                        Email delivery is on. Buyers get their ticket by email
+                        automatically after paying.
+                      </Notice>
+                    ) : (
+                      <Notice tone="warn">
+                        Email delivery is off until you add your EmailJS details
+                        below.
+                      </Notice>
+                    )}
+                  </div>
+
+                  <h2 className="mt-8 font-extrabold uppercase tracking-widest">
+                    WhatsApp
+                  </h2>
+                  <p className="mt-2 text-sm leading-6 text-black/60">
+                    After payment, buyers tap <b>Send to WhatsApp</b> to get
+                    their ticket and QR link in WhatsApp. Organizers can send
+                    any ticket from the guest list in one tap.
+                  </p>
+
+                  <h2 className="mt-8 font-extrabold uppercase tracking-widest">
+                    Email (EmailJS)
+                  </h2>
+                  <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm leading-6 text-black/65">
+                    <li>
+                      Create a free account at{" "}
+                      <a
+                        className="underline"
+                        href="https://www.emailjs.com"
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        emailjs.com
+                      </a>{" "}
+                      and connect your email under <b>Email Services</b>.
+                    </li>
+                    <li>
+                      Create an <b>Email Template</b>. Set <b>To Email</b> to{" "}
+                      <code>{"{{to_email}}"}</code> and use these in the subject
+                      or body:{" "}
+                      <code>
+                        {
+                          "{{to_name}} {{event_title}} {{event_date}} {{venue}} {{qty}} {{amount}} {{ticket_code}} {{ticket_link}}"
+                        }
+                      </code>
+                    </li>
+                    <li>
+                      Copy the Service ID, Template ID and your Public Key
+                      (Account → General) below.
+                    </li>
+                    <li>
+                      In EmailJS <b>Account → Security</b>, add{" "}
+                      <code>tanktickets.site</code> to the allowed domains.
+                    </li>
+                  </ol>
+                  <label className="label mt-5">
+                    Service ID
+                    <input
+                      className="field"
+                      value={form.emailServiceId}
+                      onChange={(e) => set("emailServiceId", e.target.value)}
+                    />
+                  </label>
+                  <label className="label mt-3">
+                    Template ID
+                    <input
+                      className="field"
+                      value={form.emailTemplateId}
+                      onChange={(e) => set("emailTemplateId", e.target.value)}
+                    />
+                  </label>
+                  <label className="label mt-3">
+                    Public key
+                    <input
+                      className="field"
+                      value={form.emailPublicKey}
+                      onChange={(e) => set("emailPublicKey", e.target.value)}
+                    />
+                  </label>
+                  <button className="btn btn-gold mt-6">
+                    Save email settings
+                  </button>
+                  {saved === "email" && (
+                    <span className="ml-3 text-sm text-emerald-700">
+                      Saved ✓
+                    </span>
+                  )}
                 </form>
               )}
-              <div className="mt-6 divide-y divide-black/10 border-t border-black/10">
-                {nights.map((n) => (
-                  <div key={n.id} className="flex flex-wrap items-center justify-between gap-3 py-4">
-                    <div>
-                      <p className="font-extrabold">{n.title}</p>
-                      <p className="text-sm text-black/50">{n.date} · {n.area} · {ugx(n.price)}</p>
-                    </div>
-                    <div className="flex gap-2">
-                      <button className="btn btn-line" onClick={() => setDraft(n)}>Edit</button>
-                      <button className="btn btn-line" onClick={() => saveNights(nights.filter((x) => x.id !== n.id))} aria-label="Delete"><Trash2 size={16} /></button>
-                    </div>
+
+              {tab === "Door" && (
+                <div>
+                  <h1 className="display text-5xl">Door check-in</h1>
+                  <div className="mt-6">
+                    <DoorPanel session={session} onChange={load} />
                   </div>
-                ))}
-              </div>
+                </div>
+              )}
             </div>
-          )}
-
-          {tab === "Tickets" && (
-            <div>
-              <h1 className="display text-5xl">Tickets</h1>
-              <div className="mt-6 overflow-x-auto">
-                <table className="w-full min-w-[720px] text-left text-sm">
-                  <thead className="text-[11px] uppercase tracking-widest text-black/40">
-                    <tr>{["Code", "Guest", "Night", "Amount", "Status"].map((h) => <th key={h} className="border-b border-black/10 py-3">{h}</th>)}</tr>
-                  </thead>
-                  <tbody>
-                    {orders.map((o) => (
-                      <tr key={o.id}>
-                        <td className="py-3 font-bold">{o.code}</td>
-                        <td>{o.name}<br /><span className="text-black/40">{o.phone}</span></td>
-                        <td>{o.nightTitle} × {o.qty}</td>
-                        <td>{ugx(o.amount)}</td>
-                        <td>{o.status}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {orders.length === 0 && <p className="py-8 text-sm text-black/45">No collections yet.</p>}
-              </div>
-            </div>
-          )}
-
-          {tab === "Briefs" && (
-            <div>
-              <h1 className="display text-5xl">Venue briefs</h1>
-              <div className="mt-6 grid gap-4">
-                {briefs.map((b) => (
-                  <article key={b.id} className="border border-black/12 p-5">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="font-extrabold">{b.venue} · {b.area}</p>
-                        <p className="mt-1 text-sm text-black/50">{b.type} · {b.date} · {b.phone}</p>
-                        <p className="mt-3 text-sm">{b.note}</p>
-                      </div>
-                      <select className="field w-36" value={b.status} onChange={(e) => saveBriefs(briefs.map((x) => x.id === b.id ? { ...x, status: e.target.value as Brief["status"] } : x))}>
-                        {["New", "In review", "Replied"].map((s) => <option key={s}>{s}</option>)}
-                      </select>
-                    </div>
-                  </article>
-                ))}
-                {briefs.length === 0 && <p className="text-sm text-black/45">No campaign briefs yet.</p>}
-              </div>
-            </div>
-          )}
-
-          {tab === "Door" && (
-            <div className="max-w-lg">
-              <h1 className="display text-5xl">Door</h1>
-              <p className="mt-3 text-sm text-black/55">Enter the guest pass code to check in.</p>
-              <div className="mt-6 flex gap-2">
-                <input className="field" placeholder="TNK-…" value={scan} onChange={(e) => setScan(e.target.value)} />
-                <button className="btn btn-dark" onClick={checkIn}><Check size={16} /></button>
-              </div>
-              {scanMsg && <p className="mt-4 text-sm font-bold">{scanMsg}</p>}
-            </div>
-          )}
-
-          {tab === "ZengaPay" && (
-            <form onSubmit={savePay} className="max-w-xl">
-              <p className="eyebrow">Collections</p>
-              <h1 className="display mt-2 text-5xl">ZengaPay</h1>
-              <p className="mt-4 text-sm leading-6 text-black/55">
-                Collections API: POST /v1/collections with msisdn, amount, external_reference and narration.
-                Token lives only in this browser. For production, proxy the call from a server so the key never ships to guests.
-              </p>
-              <label className="mt-8 block text-xs font-extrabold uppercase tracking-widest">Environment</label>
-              <select className="field mt-2" value={settings.zengaEnv} onChange={(e) => setSettings({ ...settings, zengaEnv: e.target.value as PaySettings["zengaEnv"] })}>
-                <option value="sandbox">Sandbox · api.sandbox.zengapay.com</option>
-                <option value="production">Production · api.zengapay.com</option>
-              </select>
-              <label className="mt-5 block text-xs font-extrabold uppercase tracking-widest">API token</label>
-              <input className="field mt-2" type="password" placeholder="Settings → Developer Settings" value={settings.zengaToken} onChange={(e) => setSettings({ ...settings, zengaToken: e.target.value })} />
-              <label className="mt-5 flex items-center gap-3 text-sm">
-                <input type="checkbox" checked={settings.simulate} onChange={(e) => setSettings({ ...settings, simulate: e.target.checked })} />
-                Use sandbox simulator (no live debit)
-              </label>
-              <button className="btn btn-gold mt-6">Save ZengaPay</button>
-              <p className="mt-4 text-xs text-black/40">dashboard.sandbox.zengapay.com · developers.zengapay.com</p>
-            </form>
           )}
         </section>
       </div>
