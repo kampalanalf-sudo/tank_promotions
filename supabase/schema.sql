@@ -57,6 +57,10 @@ create index if not exists orders_event_idx on public.orders (event_id);
 create index if not exists orders_dgateway_ref_idx on public.orders (dgateway_ref);
 create index if not exists orders_code_idx on public.orders (code);
 create index if not exists orders_external_ref_idx on public.orders (external_ref);
+create unique index if not exists orders_external_ref_unique_idx
+  on public.orders (external_ref) where external_ref <> '';
+create unique index if not exists orders_dgateway_ref_unique_idx
+  on public.orders (dgateway_ref) where dgateway_ref <> '';
 
 create table if not exists public.briefs (
   id uuid primary key default gen_random_uuid(),
@@ -70,12 +74,9 @@ create table if not exists public.briefs (
   created_at timestamptz not null default now()
 );
 
+-- Gateway credentials belong only in Supabase Edge Function secrets, never in this table.
 create table if not exists public.settings (
   id integer primary key default 1 check (id = 1),
-  dgateway_api_key text not null default '',
-  dgateway_webhook_secret text not null default '',
-  dgateway_api_url text not null default 'https://dgatewayapi.desispay.com',
-  dgateway_mode text not null default 'test',
   email_service_id text not null default '',
   email_template_id text not null default '',
   email_public_key text not null default '',
@@ -95,10 +96,7 @@ alter table public.orders add column if not exists provider_ref text not null de
 alter table public.orders add column if not exists payment_ref text not null default '';
 alter table public.orders add column if not exists updated_at timestamptz not null default now();
 
-alter table public.settings add column if not exists dgateway_api_key text not null default '';
-alter table public.settings add column if not exists dgateway_webhook_secret text not null default '';
-alter table public.settings add column if not exists dgateway_api_url text not null default 'https://dgatewayapi.desispay.com';
-alter table public.settings add column if not exists dgateway_mode text not null default 'test';
+
 
 -- ---------------------------------------------------------------- helpers
 
