@@ -1,8 +1,9 @@
-import { Camera, Check, Copy, Download, ImagePlus, Mail, MessageCircle, Send, X } from "lucide-react";
+import { Camera, Check, Copy, Download, FileDown, ImagePlus, Mail, MessageCircle, Send, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "./lib/api";
 import { LOGO_ICON_URL, LOGO_REMOTE_URL, LOGO_URL } from "./lib/config";
 import { dateParts, eventWhen, toLocalInput, ugx } from "./lib/format";
+import { downloadTicketPdf } from "./lib/ticketDocument";
 import {
   emailConfigured,
   emailTicket,
@@ -77,6 +78,8 @@ export function TicketCard({
 }) {
   const [qr, setQr] = useState("");
   const [copied, setCopied] = useState(false);
+  const [pdfState, setPdfState] = useState<"idle" | "saving" | "error">("idle");
+  const [pdfError, setPdfError] = useState("");
   const [emailState, setEmailState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [emailError, setEmailError] = useState("");
   const sentOnce = useRef(false);
@@ -119,6 +122,18 @@ export function TicketCard({
     }
   };
 
+  const savePdf = async () => {
+    setPdfState("saving");
+    setPdfError("");
+    try {
+      await downloadTicketPdf(payload);
+      setPdfState("idle");
+    } catch (err) {
+      setPdfState("error");
+      setPdfError(err instanceof Error ? err.message : "Could not create the PDF ticket.");
+    }
+  };
+
   return (
     <div>
       <div className="ticket">
@@ -150,6 +165,9 @@ export function TicketCard({
             {emailState === "sending" ? "Sending…" : emailState === "sent" ? "Emailed ✓" : "Email ticket"}
           </button>
         )}
+        <button type="button" onClick={savePdf} disabled={pdfState === "saving"} className="btn btn-dark disabled:opacity-60">
+          <FileDown size={16} /> {pdfState === "saving" ? "Preparing PDF…" : "Download PDF ticket"}
+        </button>
         <button type="button" onClick={copy} className="btn btn-line">
           {copied ? <Check size={16} /> : <Copy size={16} />} {copied ? "Link copied" : "Copy ticket link"}
         </button>
@@ -159,6 +177,7 @@ export function TicketCard({
           </a>
         )}
       </div>
+      {pdfState === "error" && <p className="mt-3 text-sm text-red-700">PDF failed: {pdfError}</p>}
       {emailState === "sent" && <p className="mt-3 text-sm text-emerald-700">Ticket emailed to {email}.</p>}
       {emailState === "error" && <p className="mt-3 text-sm text-red-700">Email failed: {emailError}</p>}
     </div>

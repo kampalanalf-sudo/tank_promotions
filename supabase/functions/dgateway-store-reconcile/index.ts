@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2.109.0";
 import { json } from "../_shared/cors.ts";
+import { scheduleDelivery, triggerTicketDelivery } from "../_shared/deliveryTrigger.ts";
 import {
   StoreError,
   buildStorePayment,
@@ -71,6 +72,10 @@ Deno.serve(async (req: Request) => {
     const payment = buildStorePayment(storedData, merged, config.storeSlug);
     const { data, error } = await admin.rpc("apply_dgateway_store_payment", { p_payment: payment });
     if (error) throw new StoreError(error.message || "Could not apply the verified payment.", "DATABASE_ERROR", 503);
+    const result = data as { fulfilment?: string; order_id?: string };
+    if (result.fulfilment === "issued" && result.order_id) {
+      scheduleDelivery(triggerTicketDelivery(env(), result.order_id));
+    }
     return json(req, { ok: true, ...data });
   } catch (err) {
     if (err instanceof StoreError) {

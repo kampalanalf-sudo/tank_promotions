@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { DoorPanel, EventForm, Logo, Notice, OrdersTable, Poster, Spinner, eventSummary } from "./components";
 import { EventStatusPill, eventLink } from "./Dashboard";
 import StoreFulfilmentAdmin from "./StoreFulfilmentAdmin";
+import TicketDeliveryAdmin from "./TicketDeliveryAdmin";
 import { api } from "./lib/api";
 import { API_BASE_URL, DGATEWAY_STORE_URL } from "./lib/config";
 import { requestDisburse } from "./lib/dgateway";
@@ -444,21 +445,25 @@ export default function Admin({
               )}
 
               {tab === "Ticket delivery" && form && (
-                <form
-                  onSubmit={(e) => saveSettings(e, "email")}
-                  className="max-w-2xl"
-                >
+                <div className="max-w-4xl">
                   <h1 className="display text-5xl">Ticket delivery</h1>
+                  <div className="mt-6"><TicketDeliveryAdmin /></div>
+                  <form
+                    onSubmit={(e) => saveSettings(e, "email")}
+                    className="max-w-2xl"
+                  >
+                  <h2 className="display text-3xl">Legacy browser EmailJS</h2>
                   <div className="mt-4">
                     {emailConfigured(form) ? (
                       <Notice tone="ok">
-                        Email delivery is on. Buyers get their ticket by email
-                        automatically after paying.
+                        Browser EmailJS is configured. This is a legacy fallback
+                        for the internal checkout; prefer the automatic server
+                        delivery above.
                       </Notice>
                     ) : (
                       <Notice tone="warn">
-                        Email delivery is off until you add your EmailJS details
-                        below.
+                        Browser EmailJS is off. You can leave it off once server
+                        email delivery above is configured.
                       </Notice>
                     )}
                   </div>
@@ -539,7 +544,8 @@ export default function Admin({
                       Saved ✓
                     </span>
                   )}
-                </form>
+                  </form>
+                </div>
               )}
 
               {tab === "Door" && (

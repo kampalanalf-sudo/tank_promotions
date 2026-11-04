@@ -41,7 +41,27 @@ DGATEWAY_STORE_SLUG=tanktickets
 
 The receiver fails closed if either secret is missing. It verifies `X-DGateway-Signature` HMAC-SHA256 over the raw body, re-fetches the transaction from DGateway, and only then applies `apply_dgateway_store_payment`. It issues tickets only for verified `completed` collections whose product id/slug, amount, currency, quantity, buyer email, and event capacity match an enabled `dgateway_store_mappings` row. Unknown products, mixed carts, tips/coupons that change the expected total, test payments, and capacity failures are recorded as blocked rather than issuing tickets. `failed` is final. Retries are idempotent by DGateway reference.
 
-Map each DGateway product to a Tank Tickets event in the admin UI. The initial mapping is product `49` / `ruhindo-beach-vibes-740d` → Rukindo Beach Vibes, UGX 20,000, one ticket per unit. Buyers retrieve the QR ticket with the DGateway reference and checkout email; admins can also resend from Orders. Automatic server-side email/WhatsApp delivery is not configured.
+Map each DGateway product to a Tank Tickets event in the admin UI. The initial mapping is product `49` / `ruhindo-beach-vibes-740d` → Rukindo Beach Vibes, UGX 20,000, one ticket per unit. Buyers retrieve the QR ticket with the DGateway reference and checkout email; admins can also resend from Orders.
+
+### Automatic email, WhatsApp, and PDF delivery
+
+After a verified `completed` payment issues a ticket, the Edge Functions call `ticket-delivery` in the background. It generates a PDF ticket with a QR code, stores it in the private `tickets` storage bucket, creates a 7-day signed download URL, emails the PDF through Resend, and sends a WhatsApp Cloud API template containing the ticket link and PDF link. Delivery is recorded in `ticket_deliveries` and is idempotent; admins can inspect status and force a resend under Admin → Ticket delivery.
+
+Set these Supabase Edge Function secrets (never `VITE_`):
+
+```text
+RESEND_API_KEY=...
+EMAIL_FROM=TANK Tickets <tickets@tanktickets.site>
+EMAIL_REPLY_TO=...                     # optional
+WHATSAPP_ACCESS_TOKEN=...
+WHATSAPP_PHONE_NUMBER_ID=...
+WHATSAPP_TEMPLATE_NAME=...             # Meta-approved template
+WHATSAPP_TEMPLATE_LANGUAGE=en_US       # optional, default en_US
+WHATSAPP_TEMPLATE_BODY_FIELDS=name,event_title,event_date,ticket_code,ticket_url,pdf_url
+TICKET_PUBLIC_URL=https://tanktickets.site
+```
+
+The WhatsApp template body must use the variables in `WHATSAPP_TEMPLATE_BODY_FIELDS`, in that exact order. The default expects six body variables: buyer name, event title, event date, ticket code, ticket URL, and PDF URL. If a channel is not configured, delivery is marked `skipped` rather than failing the payment webhook. Buyers can always download the PDF from their ticket page.
 
 ### In-app API mode
 
@@ -94,6 +114,8 @@ Use the Supabase project `xmfvxypioitbsnsbgioq` (Tank Tickets). Do not substitut
    - `supabase/migrations/20261103_secure_dgateway_checkout.sql`
    - `supabase/migrations/20261104_dgateway_api_routes.sql`
    - `supabase/migrations/20261104_dgateway_create_order_security.sql`
+   - `supabase/migrations/20261104_dgateway_store_fulfilment.sql`
+   - `supabase/migrations/20261104_ticket_delivery.sql`
 
 The second migration adds `orders.currency`, `orders.last_status_check_at`, and the admin-only `payouts` table, and relaxes `create_order` phone validation so DGateway leading-zero numbers are preserved. The third keeps `create_order` as `SECURITY DEFINER`, which is required because `orders` has RLS enabled and no direct insert policy.
 

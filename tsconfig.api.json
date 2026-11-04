@@ -10,5 +10,5 @@
     "verbatimModuleSyntax": true,
     "noEmit": true
   },
-  "include": ["server", "api", "supabase/functions/_shared/storeCore.ts"]
+  "include": ["server", "api", "supabase/functions/_shared/storeCore.ts", "supabase/functions/_shared/deliveryCore.ts", "supabase/functions/_shared/deliveryTrigger.ts", "src/lib/ticketDocument.ts"]
 }

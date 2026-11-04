@@ -12,7 +12,7 @@ import {
   type Settings,
   type TankEvent,
 } from "./types";
-import type { HostedTicketProduct, StoreMapping, StoreMappingInput, StorePayment, StoreTicket } from "./storeFulfilment";
+import type { HostedTicketProduct, StoreMapping, StoreMappingInput, StorePayment, StoreTicket, TicketDelivery, TicketDeliveryResult, TicketDeliveryStatus } from "./storeFulfilment";
 
 export const cloud: SupabaseClient | null =
   SUPABASE_URL && SUPABASE_ANON_KEY ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
@@ -536,5 +536,40 @@ export const api = {
     const { data, error } = await cloud.functions.invoke("dgateway-store-reconcile", { body: { reference } });
     if (error) throw new Error(error.message || "Could not reconcile this payment.");
     return (data || {}) as { fulfilment?: string; code?: string; error?: string };
+  },
+
+  /* ---------- automatic ticket delivery ---------- */
+  async ticketDeliveryStatus(): Promise<TicketDeliveryStatus> {
+    if (!cloud) throw new Error("Ticket delivery needs the online database to be connected.");
+    const { data, error } = await cloud.functions.invoke("ticket-delivery", { body: { action: "status" } });
+    if (error) throw new Error(error.message || "Could not load ticket delivery status.");
+    const result = (data || {}) as TicketDeliveryStatus;
+    if (result.ok === false) throw new Error(result.error || "Could not load ticket delivery status.");
+    return result;
+  },
+
+  async listTicketDeliveries(): Promise<TicketDelivery[]> {
+    if (!cloud) throw new Error("Ticket delivery needs the online database to be connected.");
+    const { data, error } = await cloud.from("ticket_deliveries").select("*").order("updated_at", { ascending: false }).limit(200);
+    fail(error);
+    return (data || []) as TicketDelivery[];
+  },
+
+  async deliverTicket(orderId: string, force = false): Promise<TicketDeliveryResult> {
+    if (!cloud) throw new Error("Ticket delivery needs the online database to be connected.");
+    const { data, error } = await cloud.functions.invoke("ticket-delivery", { body: { order_id: orderId, force } });
+    if (error) throw new Error(error.message || "Could not deliver this ticket.");
+    const result = (data || {}) as TicketDeliveryResult;
+    if (result.ok === false) throw new Error(result.error || "Could not deliver this ticket.");
+    return result;
+  },
+
+  async deliverTicketByReference(reference: string, force = false): Promise<TicketDeliveryResult> {
+    if (!cloud) throw new Error("Ticket delivery needs the online database to be connected.");
+    const { data, error } = await cloud.functions.invoke("ticket-delivery", { body: { reference, force } });
+    if (error) throw new Error(error.message || "Could not deliver this ticket.");
+    const result = (data || {}) as TicketDeliveryResult;
+    if (result.ok === false) throw new Error(result.error || "Could not deliver this ticket.");
+    return result;
   },
 };
