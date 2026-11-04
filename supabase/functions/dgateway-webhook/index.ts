@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2.109.0";
 import { json } from "../_shared/cors.ts";
 import { GatewayError, normalizeStatus, transactionMatches, verify, verifyWebhookSignature, type OrderRow } from "../_shared/dgateway.ts";
+import { scheduleDelivery, triggerTicketDelivery } from "../_shared/deliveryTrigger.ts";
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return json(req, { ok: true });
@@ -22,7 +23,10 @@ Deno.serve(async (req: Request) => {
     if (error) throw error;
     if (!row) return json(req, { ok: false, error: "Order not found; retry this webhook later." }, 404);
     const order = row as OrderRow;
-    if (order.status === "SUCCEEDED" || order.status === "CHECKED_IN") return json(req, { received: true, idempotent: true });
+    if (order.status === "SUCCEEDED" || order.status === "CHECKED_IN") {
+      scheduleDelivery(triggerTicketDelivery({ SUPABASE_URL: Deno.env.get("SUPABASE_URL"), SUPABASE_SERVICE_ROLE_KEY: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") }, order.id));
+      return json(req, { received: true, idempotent: true });
+    }
     // The signed notification is also checked against the provider, including amount and currency.
     const tx = await verify(order.dgateway_ref);
     if (!transactionMatches(tx, order)) throw new GatewayError("Webhook transaction does not match the order.", "ORDER_MISMATCH");
@@ -34,6 +38,9 @@ Deno.serve(async (req: Request) => {
         updated_at: new Date().toISOString(),
       }).eq("id", order.id).eq("dgateway_ref", order.dgateway_ref).in("status", ["PENDING", "FAILED"]);
       if (updateError) throw updateError;
+      if (status === "completed") {
+        scheduleDelivery(triggerTicketDelivery({ SUPABASE_URL: Deno.env.get("SUPABASE_URL"), SUPABASE_SERVICE_ROLE_KEY: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") }, order.id));
+      }
     }
     return json(req, { received: true, status });
   } catch (err) {

@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2.109.0";
 import { json } from "../_shared/cors.ts";
 import { GatewayError, normalizeStatus, publicOrder, transactionMatches, verify, type OrderRow } from "../_shared/dgateway.ts";
+import { scheduleDelivery, triggerTicketDelivery } from "../_shared/deliveryTrigger.ts";
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return json(req, { ok: true });
@@ -31,6 +32,9 @@ Deno.serve(async (req: Request) => {
       }).eq("id", order.id).eq("dgateway_ref", order.dgateway_ref).in("status", ["PENDING", "FAILED"]);
       if (updateError) throw updateError;
       order.status = next;
+      if (next === "SUCCEEDED") {
+        scheduleDelivery(triggerTicketDelivery({ SUPABASE_URL: Deno.env.get("SUPABASE_URL"), SUPABASE_SERVICE_ROLE_KEY: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") }, order.id));
+      }
     }
     return json(req, { ok: true, status: verified, order: publicOrder(order) });
   } catch (err) {

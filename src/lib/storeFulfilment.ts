@@ -67,6 +67,44 @@ export type StoreTicket = {
   status: "SUCCEEDED" | "CHECKED_IN";
 };
 
+export type TicketDelivery = {
+  order_id: string;
+  email_status: "pending" | "sent" | "failed" | "skipped";
+  whatsapp_status: "pending" | "sent" | "failed" | "skipped";
+  email_attempts: number;
+  whatsapp_attempts: number;
+  email_last_error: string;
+  whatsapp_last_error: string;
+  email_sent_at: string | null;
+  whatsapp_sent_at: string | null;
+  pdf_path: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TicketDeliveryResult = {
+  ok?: boolean;
+  order_id?: string;
+  code?: string;
+  email_status?: TicketDelivery["email_status"];
+  whatsapp_status?: TicketDelivery["whatsapp_status"];
+  pdf_url?: string;
+  email_last_error?: string;
+  whatsapp_last_error?: string;
+  error?: string;
+};
+
+export type TicketDeliveryStatus = {
+  ok?: boolean;
+  email_enabled: boolean;
+  whatsapp_enabled: boolean;
+  email_from: string;
+  whatsapp_template: string;
+  whatsapp_language: string;
+  public_url: string;
+  error?: string;
+};
+
 export function storeWebhookUrl(supabaseUrl: string) {
   return supabaseUrl ? `${supabaseUrl.replace(/\/$/, "")}/functions/v1/dgateway-store-webhook` : "";
 }

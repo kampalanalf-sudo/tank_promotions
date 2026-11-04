@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2.109.0";
+import { scheduleDelivery, triggerTicketDelivery } from "../_shared/deliveryTrigger.ts";
 import {
   handleStoreWebhook,
   jsonResponse,
@@ -33,7 +34,11 @@ Deno.serve(async (req: Request) => {
         console.error("dgateway-store-webhook: database rejected verified payment", error.code);
         return { received: false, fulfilment: "blocked", code: "DATABASE_ERROR" } satisfies StoreApplyResult;
       }
-      return data as StoreApplyResult;
+      const result = data as StoreApplyResult;
+      if (result.fulfilment === "issued" && result.order_id) {
+        scheduleDelivery(triggerTicketDelivery(env(), result.order_id));
+      }
+      return result;
     });
   } catch (err) {
     return storeErrorResponse(err);
