@@ -5,7 +5,7 @@ import { Notice, Poster, TicketCard } from "./components";
 import { api } from "./lib/api";
 import { initiatePayment, PaymentError, pollPaymentStatus } from "./lib/dgateway";
 import { eventWhen, ugx } from "./lib/format";
-import { detectNetwork, isValidUgPhone, toMsisdn } from "./lib/phone";
+import { cleanPhone, detectNetwork, isValidGatewayPhone } from "./lib/phone";
 import { emailConfigured, newTicketCode, payloadFor } from "./lib/tickets";
 import { CONTACT_PHONE } from "./lib/config";
 import type { Order, Session, Settings, TankEvent } from "./lib/types";
@@ -59,13 +59,13 @@ export function Checkout({ event, session, settings, onClose, onSold }: {
     if (submitting.current || left === 0) return;
     setError("");
     if (!name.trim()) return setError("Enter the guest's full name.");
-    if (!isValidUgPhone(phone)) return setError("Enter a valid Ugandan mobile number, e.g. 0772 123456 or 0758 443666.");
+    if (!isValidGatewayPhone(phone)) return setError("Enter a valid Mobile Money number, e.g. 0772 123456, 256772123456 or +256772123456.");
     if (emailOn && !email.trim()) return setError("Enter your email so we can send your ticket.");
     submitting.current = true;
     setBusy(true);
     attempt.current ||= { code: newTicketCode(), externalRef: `TNK-${crypto.randomUUID()}` };
     const { code, externalRef } = attempt.current;
-    const input = { eventId: event.id, code, name: name.trim(), phone: toMsisdn(phone), email: email.trim(), qty, externalRef };
+    const input = { eventId: event.id, code, name: name.trim(), phone: cleanPhone(phone), email: email.trim(), qty, externalRef };
     try {
       if (free) {
         const created = await api.createOrder(input);
@@ -137,7 +137,7 @@ export function Checkout({ event, session, settings, onClose, onSold }: {
       }
       timer = window.setTimeout(tick, POLL_INTERVAL);
     };
-    timer = window.setTimeout(tick, 4000);
+    timer = window.setTimeout(tick, POLL_INTERVAL);
     return () => {
       stopped = true;
       if (timer !== undefined) window.clearTimeout(timer);
@@ -198,7 +198,7 @@ export function Checkout({ event, session, settings, onClose, onSold }: {
               <form onSubmit={submit} className="mt-7 grid gap-3">
                 <label className="label">Full name<input className="field" value={name} onChange={(e) => setName(e.target.value)} required maxLength={80} autoComplete="name" placeholder="e.g. Sarah Namubiru" /></label>
                 <label className="label">{free ? "WhatsApp number" : "Mobile Money number (MTN / Airtel)"}<input className="field" type="tel" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} required placeholder="e.g. 0772 123456" autoComplete="tel" /></label>
-                {phone && isValidUgPhone(phone) && !free && <div className="rounded bg-[#c9a227]/15 p-2 text-xs font-bold text-[#6d5308]">{detectNetwork(phone)} Mobile Money · Direct phone prompt</div>}
+                {phone && isValidGatewayPhone(phone) && !free && <div className="rounded bg-[#c9a227]/15 p-2 text-xs font-bold text-[#6d5308]">{detectNetwork(phone)} Mobile Money · Direct phone prompt</div>}
                 <label className="label">Email {emailOn ? "(required for ticket delivery)" : "(optional)"}<input className="field" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required={emailOn} autoComplete="email" placeholder="e.g. sarah@gmail.com" /></label>
                 {!free && <div className="rounded border border-black/10 bg-white/70 p-3 text-xs leading-5 text-black/70"><p className="font-extrabold uppercase tracking-wider text-black">How Mobile Money works</p><p className="mt-1">Tap Pay, then approve {ugx(total)} on your phone with your Mobile Money PIN. Your ticket unlocks after the payment is verified. Never share your PIN on this website.</p></div>}
                 {error && <div role="alert" className="border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-700">{error}</div>}
@@ -209,7 +209,7 @@ export function Checkout({ event, session, settings, onClose, onSold }: {
             {step === "pay" && order && (
               <div className="mt-7">
                 <div className="flex items-center gap-2"><Smartphone className="text-[#a8841a]" size={24} /><p className="eyebrow m-0! text-[#a8841a]">{detectNetwork(order.phone)} Mobile Money</p></div>
-                <h3 className="display mt-2 text-4xl">Check your phone</h3>
+                <h3 className="display mt-2 text-4xl">Check your phone and approve the prompt</h3>
                 <p className="mt-4 text-sm leading-6 text-black/70">Approve the payment prompt of <b>{ugx(order.amount)}</b> sent to <b>{order.phone}</b>. Enter your PIN on your phone, not on this page.</p>
                 <div className="mt-4 grid gap-2 border border-black/12 bg-white/70 p-4 text-sm">
                   <p className="flex justify-between gap-3"><span>Ticket reference</span><b className="font-mono">{order.code}</b></p>

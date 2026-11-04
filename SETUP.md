@@ -1,84 +1,122 @@
-# TANK Tickets: verified Mobile Money checkout
+# TANK Tickets: server-only DGateway checkout
 
-## What changed
+## Architecture
 
-The application source is now maintained on `main`, not a separate stale `deploy` bundle. GitHub Actions builds the React app, runs checkout and server-security tests, publishes `dist`, and checks the public page's commit marker. `public/CNAME` preserves `tanktickets.site`.
+Paid checkout calls server routes under `/api`. The browser never receives the DGateway API key and never calls DGateway directly.
 
-Paid checkout uses DGateway through Supabase Edge Functions. It never falls back to ZengaPay, merchant USSD codes, SMS matching, a local simulator, or a browser-issued ticket. Free events can still be booked without a payment gateway.
+- `POST /api/payments/collect` creates/reuses an order, requests a DGateway collection, and stores the returned `reference`.
+- `POST /api/payments/disburse` is admin-only and requests a payout to any supplied MTN/Airtel number.
+- `GET /api/payments/:reference/status?code=TICKET_CODE` is the browser status proxy. The server throttles provider checks to at most one per 10 seconds per payment.
+- `POST /api/webhooks/dgateway` receives DGateway callbacks, verifies the signature when a secret is configured, re-fetches the transaction from DGateway, and only then credits the matching order/payout.
+- `GET /api/health` is a lightweight health check.
 
-## Backend setup — required before accepting payments
+The browser polls the status proxy every 10 seconds, starting 10 seconds after the collection request, and stops after about 5 minutes. While mobile-money confirmation is pending it shows: “Check your phone and approve the prompt”. Tickets are issued only after the server verifies `completed`; `failed` is final. There is no ZengaPay, SMS, USSD, merchant-code, local simulator, or browser-issued paid ticket fallback.
 
-Use the Supabase project configured in `.env.production`. Do not substitute another project: its events, orders and auth users are different.
+## Required server environment
 
-1. Connect that project to the deployment tooling, or open its Supabase dashboard.
-2. Back up the database, then run `supabase/migrations/20261103_secure_dgateway_checkout.sql` in the SQL editor. This preserves existing data, makes order creation idempotent, and revokes public execution of historical manual confirmation functions. For a new database, run `supabase/schema.sql` instead.
-3. In **Edge Functions → Secrets**, set:
-   - `DGATEWAY_API_KEY`: the app's test or live key from DGateway. Never put it in a `VITE_` variable or browser settings.
-   - `DGATEWAY_WEBHOOK_SECRET`: the app's webhook signing secret.
-   - `DGATEWAY_API_URL`: `https://dgatewayapi.desispay.com`.
-   Supabase supplies `SUPABASE_URL`, `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` to the functions.
-4. Deploy all three functions, including the `_shared` directory:
+Set these on the API host (Vercel project environment variables, or the Node server environment). Never prefix private values with `VITE_`.
 
-   ```sh
-   supabase functions deploy dgateway-collect --project-ref YOUR_PROJECT_REF --no-verify-jwt
-   supabase functions deploy dgateway-status --project-ref YOUR_PROJECT_REF --no-verify-jwt
-   supabase functions deploy dgateway-webhook --project-ref YOUR_PROJECT_REF --no-verify-jwt
-   ```
+```sh
+DGATEWAY_API_URL=https://dgatewayapi.desispay.com
+DGATEWAY_API_KEY=...                 # server-only test/live key
+DGATEWAY_WEBHOOK_SECRET=...          # optional but recommended; HMAC-SHA256 raw-body secret
+SUPABASE_URL=https://xmfvxypioitbsnsbgioq.supabase.co
+SUPABASE_ANON_KEY=...                # public anon key
+SUPABASE_SERVICE_ROLE_KEY=...        # server-only service role key
+ADMIN_EMAIL=admin@tanktickets.site
+APP_URL=https://tanktickets.site     # public origin used to build callback_url
+```
 
-   The functions support guest checkout. Collection validates the order server-side; status checks the exact order/reference; the webhook requires a valid HMAC signature and verifies the transaction with DGateway. Disabling Supabase JWT verification does not disable these application checks.
-5. In DGateway → **My Apps → Settings**, register:
+Browser build variables:
 
-   ```text
-   https://YOUR_PROJECT_REF.supabase.co/functions/v1/dgateway-webhook
-   ```
+```sh
+VITE_SUPABASE_URL=https://xmfvxypioitbsnsbgioq.supabase.co
+VITE_SUPABASE_ANON_KEY=...
+VITE_API_BASE_URL=https://YOUR_API_HOST
+VITE_BUILD_SHA=...
+```
 
-6. Keep test mode until an end-to-end sandbox payment and webhook have passed. DGateway's documented numbers are `0111777771` (success), `0111777991` (failure), and `0111777881` (pending). Use them only with a `dgw_test_` key. Never simulate success in the frontend.
-7. Replace the server key with the live key only after gateway approval and a controlled real-number verification. Test numbers are rejected with live keys.
+For local development, leave `VITE_API_BASE_URL` empty. Vite proxies `/api` to `http://127.0.0.1:8787`.
 
-The Admin → DGateway page shows setup information and the webhook URL; it does not store gateway credentials in the database or browser.
+## Database setup
 
-## Frontend and publishing
+Use the Supabase project `xmfvxypioitbsnsbgioq` (Tank Tickets). Do not substitute another project.
 
-`.env.production` contains only the public Supabase URL and public `anon` key. Row Level Security and server-only payment functions protect data. Keep all private keys out of this repository.
+1. Back up the database.
+2. For a new database, run `supabase/schema.sql`.
+3. For the existing database, apply migrations in order:
+   - `supabase/migrations/20261103_secure_dgateway_checkout.sql`
+   - `supabase/migrations/20261104_dgateway_api_routes.sql`
+
+The second migration adds `orders.currency`, `orders.last_status_check_at`, and the admin-only `payouts` table, and relaxes `create_order` phone validation so DGateway leading-zero numbers are preserved.
+
+## Local development
 
 ```sh
 npm ci
+npm run dev:api     # server-only payments API on 0.0.0.0:8787
+npm run dev         # Vite on 0.0.0.0:5173, proxies /api to 8787
+```
+
+Checks:
+
+```sh
 npm run check
 npm run verify:build
 npm run check:server
 npm run test:server
-npm run dev
 ```
 
-Pull requests run checks. Merging to `main` publishes the site through GitHub Actions. Do not copy an old `docs/index.html` over the new build or force-push a separate deployment branch.
+## Deploying the API
 
-Every build includes a `tank-build` HTML meta tag with its Git commit SHA. After deployment, check:
+GitHub Pages can host the static React bundle, but it cannot serve `/api/...`. Deploy the API routes to a server runtime such as Vercel:
 
-```sh
-curl -fsSL 'https://tanktickets.site/?build=COMMIT_SHA' | grep 'tank-build'
-```
+- `api/payments/collect.ts`
+- `api/payments/disburse.ts`
+- `api/payments/[reference]/status.ts`
+- `api/webhooks/dgateway.ts`
+- `api/health.ts`
 
-If the SHA differs, check the Pages deployment commit and CDN cache before changing payment code. A query-string URL bypasses the usual cached page URL. The checkout also displays an explicit unavailable message if its backend function is missing; it does not show a fake phone prompt.
+`vercel.json` is included. The API host must allow requests from `https://tanktickets.site` and must not be blocked by SSO/deployment protection for DGateway webhooks. Set `VITE_API_BASE_URL` to the public API origin before building the frontend.
 
-## Ticket delivery
-
-After server-verified payment, the QR ticket appears on screen. Buyers can save it or share it to WhatsApp. Signed-in buyers can find it in My tickets. Automatic email requires the EmailJS settings in Admin → Ticket delivery. WhatsApp sharing is buyer-initiated, not an automatic WhatsApp API delivery.
-
-## Current deployment verification
-
-As of 2026-11-04, the public site is served from `main`, and the TANK Supabase project `xmfvxypioitbsnsbgioq` is connected. The secure checkout migration has been applied, and `dgateway-collect`, `dgateway-status`, and `dgateway-webhook` are deployed and active. `DGATEWAY_API_URL` is configured. A pre-migration backup is stored in the private database schema `tank_private_backup`.
-
-Paid collections are still **not live** until the DGateway app credentials are added as Supabase Edge Function secrets:
-
-- `DGATEWAY_API_KEY`: start with the app's `dgw_test_` key.
-- `DGATEWAY_WEBHOOK_SECRET`: the app's generated webhook signing secret.
-
-Add them in Supabase → Edge Functions → Secrets for this project. Do not paste them into chat, commit them, or store them in the browser/database settings. The webhook URL is:
+Register the webhook URL in DGateway → My Apps → Settings:
 
 ```text
-https://xmfvxypioitbsnsbgioq.supabase.co/functions/v1/dgateway-webhook
+https://YOUR_API_HOST/api/webhooks/dgateway
 ```
 
-A fresh page build and active Edge Functions do **not** prove that live collections work. Complete the DGateway secrets/webhook setup and run a sandbox payment before declaring the payment flow live.
+If `DGATEWAY_WEBHOOK_SECRET` is set, DGateway must sign the raw request body with HMAC-SHA256. The handler accepts `x-dgateway-signature`, `x-webhook-signature`, or `x-signature`, with or without a `sha256=` prefix. Even without a webhook secret, the handler does not trust the webhook body: it re-fetches the transaction from DGateway and matches reference, amount, currency, and direction before crediting.
+
+## DGateway contract
+
+Base URL: `https://dgatewayapi.desispay.com`. Auth header: `X-API-Key`.
+
+Collect:
+
+```http
+POST /v1/payments/collect
+{ "amount": 20000, "currency": "UGX", "phone_number": "0772123456", "description": "...", "callback_url": "https://YOUR_API_HOST/api/webhooks/dgateway" }
+```
+
+Disburse:
+
+```http
+POST /v1/payments/disburse
+{ "amount": 5000, "currency": "UGX", "phone_number": "0772123456", "description": "..." }
+```
+
+Status:
+
+```http
+GET /v1/transactions/:reference/status
+```
+
+Currency routing is automatic: UGX/KES/TZS mobile money, USD Stripe card. Mobile-money amounts are whole units; USD amounts are cents. Phone numbers may be `07XXXXXXXX`, `2567XXXXXXXX`, or `+2567XXXXXXXX` (also 254/255/250). The leading 0 is preserved.
+
+## Current deployment status
+
+As of 2026-11-04, the Supabase migrations are applied to `xmfvxypioitbsnsbgioq`. The old Supabase Edge Functions (`dgateway-collect`, `dgateway-status`, `dgateway-webhook`) are legacy and no longer used by the browser.
+
+Paid collections are **not live** until the `/api` server is deployed and `DGATEWAY_API_KEY` is configured in the server host environment. Until then the API fails closed with `PAYMENT_NOT_CONFIGURED` and the checkout shows an honest unavailable message. Complete a sandbox collection plus verified webhook/status round-trip before declaring payments live.
 
 DGateway API reference: https://dgateway.desispay.com/docs

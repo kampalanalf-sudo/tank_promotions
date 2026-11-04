@@ -3,7 +3,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { DoorPanel, EventForm, Logo, Notice, OrdersTable, Poster, Spinner, eventSummary } from "./components";
 import { EventStatusPill, eventLink } from "./Dashboard";
 import { api } from "./lib/api";
-import { SUPABASE_URL } from "./lib/config";
+import { API_BASE_URL } from "./lib/config";
+import { requestDisburse } from "./lib/dgateway";
+import { cleanPhone, isValidGatewayPhone } from "./lib/phone";
 import { ugx } from "./lib/format";
 import { emailConfigured } from "./lib/tickets";
 import type { EventInput, Order, Session, Settings, TankEvent } from "./lib/types";
@@ -36,6 +38,12 @@ export default function Admin({
   const [form, setForm] = useState<Settings | null>(settings);
   const [saved, setSaved] = useState("");
   const [copied, setCopied] = useState("");
+  const [payoutAmount, setPayoutAmount] = useState("");
+  const [payoutCurrency, setPayoutCurrency] = useState("UGX");
+  const [payoutPhone, setPayoutPhone] = useState("");
+  const [payoutDescription, setPayoutDescription] = useState("");
+  const [payoutBusy, setPayoutBusy] = useState(false);
+  const [payoutMessage, setPayoutMessage] = useState("");
 
   useEffect(() => setForm(settings), [settings]);
 
@@ -108,9 +116,38 @@ export default function Admin({
   const set = <K extends keyof Settings>(k: K, v: Settings[K]) =>
     form && setForm({ ...form, [k]: v });
 
-  const webhookUrl = SUPABASE_URL
-    ? `${SUPABASE_URL}/functions/v1/dgateway-webhook`
-    : "Connect Supabase to configure payments";
+  const localPreview = typeof window !== "undefined" && /localhost|127\.0\.0\.1|\.e2b\.app$/.test(window.location.hostname);
+  const apiBase = API_BASE_URL || (localPreview ? window.location.origin : "");
+  const webhookUrl = apiBase
+    ? `${apiBase}/api/webhooks/dgateway`
+    : "Deploy the /api server and set VITE_API_BASE_URL";
+
+  const sendPayout = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPayoutMessage("");
+    const amount = Number(payoutAmount);
+    const phone = cleanPhone(payoutPhone);
+    if (!Number.isInteger(amount) || amount <= 0) return setPayoutMessage("Enter a positive whole-unit amount.");
+    if (!isValidGatewayPhone(phone)) return setPayoutMessage("Enter a valid MTN/Airtel number, e.g. 0772123456 or +256772123456.");
+    setPayoutBusy(true);
+    try {
+      const result = await requestDisburse({
+        externalRef: `PAY-${crypto.randomUUID()}`,
+        amount,
+        currency: payoutCurrency,
+        phoneNumber: phone,
+        description: payoutDescription.trim() || "TANK Tickets payout",
+      });
+      setPayoutMessage(`Payout requested. Reference: ${String(result.reference || "pending")} · Status: ${String(result.status || "pending")}`);
+      setPayoutAmount("");
+      setPayoutPhone("");
+      setPayoutDescription("");
+    } catch (err) {
+      setPayoutMessage(err instanceof Error ? err.message : "Payout request failed.");
+    } finally {
+      setPayoutBusy(false);
+    }
+  };
 
   const copyText = async (text: string, label: string) => {
     try {
@@ -370,9 +407,21 @@ export default function Admin({
                       </button>
                     </div>
                   </div>
+                  <form onSubmit={sendPayout} className="mt-6 rounded border border-black/12 bg-white/60 p-5">
+                    <h2 className="text-xs font-extrabold uppercase tracking-wider">Send a payout</h2>
+                    <p className="mt-2 text-xs leading-5 text-black/60">Admin-only DGateway disbursement to any supplied MTN/Airtel number. The server stores the reference and verifies completion.</p>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                      <label className="label">Amount<input className="field" type="number" min={1} step={1} value={payoutAmount} onChange={(e) => setPayoutAmount(e.target.value)} required placeholder="e.g. 5000" /></label>
+                      <label className="label">Currency<select className="field" value={payoutCurrency} onChange={(e) => setPayoutCurrency(e.target.value)}><option>UGX</option><option>KES</option><option>TZS</option><option>RWF</option><option>USD</option></select></label>
+                      <label className="label sm:col-span-2">Recipient number<input className="field" type="tel" value={payoutPhone} onChange={(e) => setPayoutPhone(e.target.value)} required placeholder="e.g. 0772123456 or +256772123456" /></label>
+                      <label className="label sm:col-span-2">Description<input className="field" value={payoutDescription} onChange={(e) => setPayoutDescription(e.target.value)} maxLength={180} placeholder="e.g. Organizer payout" /></label>
+                    </div>
+                    {payoutMessage && <div role="status" className="mt-3 rounded border border-black/10 bg-white/70 p-3 text-xs font-bold">{payoutMessage}</div>}
+                    <button disabled={payoutBusy} className="btn btn-dark mt-4 w-full text-sm font-black disabled:opacity-50">{payoutBusy ? "Requesting payout…" : "Request payout"}</button>
+                  </form>
                   <div className="mt-6 rounded border border-amber-500/30 bg-amber-50/70 p-5 text-sm leading-6 text-amber-950">
                     <h2 className="font-extrabold">Server-side configuration</h2>
-                    <p className="mt-2">Set DGATEWAY_API_KEY, DGATEWAY_WEBHOOK_SECRET and DGATEWAY_API_URL in the Supabase Edge Function secrets for this project. Deploy dgateway-collect, dgateway-status and dgateway-webhook, then run the payment security migration.</p>
+                    <p className="mt-2">Set DGATEWAY_API_KEY, DGATEWAY_WEBHOOK_SECRET, DGATEWAY_API_URL, SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, ADMIN_EMAIL and APP_URL in the server host environment. Deploy the /api routes, then run the payment migrations.</p>
                     <p className="mt-2">Credentials are never entered or saved in this browser. Test and live modes are determined by the server API key, not by a switch on this page.</p>
                     <a className="mt-3 inline-flex items-center gap-1 font-bold underline" href="https://dgatewayadmin.desispay.com" target="_blank" rel="noreferrer">Open DGateway <ExternalLink size={13} /></a>
                   </div>

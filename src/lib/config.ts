@@ -7,6 +7,10 @@
 export const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.trim() || "";
 export const SUPABASE_ANON_KEY = (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim() || "";
 
+// Base URL of the server-only payments API. Leave empty in local dev so Vite proxies /api.
+// In production this must point at the deployed /api host, e.g. https://api.tanktickets.site.
+export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim().replace(/\/$/, "") || "";
+
 // The one account that gets the admin desk. Must match ADMIN_EMAIL in supabase/schema.sql.
 export const ADMIN_EMAIL = "admin@tanktickets.site";
 
