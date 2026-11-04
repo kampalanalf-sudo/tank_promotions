@@ -47,8 +47,9 @@ Use the Supabase project `xmfvxypioitbsnsbgioq` (Tank Tickets). Do not substitut
 3. For the existing database, apply migrations in order:
    - `supabase/migrations/20261103_secure_dgateway_checkout.sql`
    - `supabase/migrations/20261104_dgateway_api_routes.sql`
+   - `supabase/migrations/20261104_dgateway_create_order_security.sql`
 
-The second migration adds `orders.currency`, `orders.last_status_check_at`, and the admin-only `payouts` table, and relaxes `create_order` phone validation so DGateway leading-zero numbers are preserved.
+The second migration adds `orders.currency`, `orders.last_status_check_at`, and the admin-only `payouts` table, and relaxes `create_order` phone validation so DGateway leading-zero numbers are preserved. The third keeps `create_order` as `SECURITY DEFINER`, which is required because `orders` has RLS enabled and no direct insert policy.
 
 ## Local development
 
