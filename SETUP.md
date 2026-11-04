@@ -63,6 +63,41 @@ npm run dev         # Vite on 0.0.0.0:5173, proxies /api to 8787
 
 For local browser testing, leave `VITE_API_BASE_URL` empty so the browser calls same-origin `/api` and Vite proxies to the API. DGateway cannot deliver webhooks to `localhost`; use the 10-second status polling locally, or expose the API through a public HTTPS URL and set `APP_URL` to that origin if you need webhook delivery.
 
+### Termux / “Missing script: dev:api”
+
+`npm run dev` only starts Vite. It does not start the payments API. Run `npm run dev:api` in a separate terminal/session and keep it open.
+
+If `npm run dev:api` says `Missing script: "dev:api"`, the checkout does not contain the server-route branch yet. From the repository root:
+
+```sh
+git fetch origin
+git switch arena/25a297ce-tank-promotions || git switch --track -c arena/25a297ce-tank-promotions origin/arena/25a297ce-tank-promotions
+git pull --ff-only origin arena/25a297ce-tank-promotions
+npm ci
+node -e "console.log(require('./package.json').scripts['dev:api'] || 'MISSING')"
+```
+
+The last command must print the `node --env-file-if-exists=... server/dev.ts` command. Then use two Termux sessions:
+
+```sh
+# Session 1
+cd ~/tank
+npm run dev:api
+
+# Session 2
+cd ~/tank
+npm run dev
+```
+
+Health checks:
+
+```sh
+curl http://127.0.0.1:8787/api/health
+curl http://127.0.0.1:5173/api/health
+```
+
+Use Node.js 22 or newer for the `--env-file-if-exists` loader.
+
 Checks:
 
 ```sh
