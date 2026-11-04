@@ -23,7 +23,25 @@ To disable hosted-store redirects and use the in-app API checkout instead:
 VITE_DGATEWAY_STORE_URL=off
 ```
 
-Important: redirecting to the DGateway store lets DGateway collect payment, but Tank Tickets will not automatically issue a QR ticket unless DGateway also sends a verified webhook to a server endpoint that can match the store purchase to a Tank Tickets order/event. GitHub Pages alone cannot receive that webhook. If you need automatic Tank Tickets QR issuance, use the in-app API mode or deploy a webhook receiver and configure the DGateway store product/webhook mapping.
+Hosted-store fulfilment is handled by Supabase Edge Functions, not GitHub Pages:
+
+- Webhook receiver: `https://xmfvxypioitbsnsbgioq.supabase.co/functions/v1/dgateway-store-webhook`
+- Admin reconcile/recheck: `https://xmfvxypioitbsnsbgioq.supabase.co/functions/v1/dgateway-store-reconcile`
+- Buyer ticket lookup: `https://tanktickets.site/#/store-ticket` (DGateway reference + checkout email)
+- Admin mapping UI: Admin → DGateway → Hosted store fulfilment
+
+Register the webhook receiver URL in DGateway → My Apps → Settings. Set these Supabase Edge Function secrets (never `VITE_`):
+
+```text
+DGATEWAY_API_KEY=...
+DGATEWAY_WEBHOOK_SECRET=...
+DGATEWAY_API_URL=https://dgatewayapi.desispay.com
+DGATEWAY_STORE_SLUG=tanktickets
+```
+
+The receiver fails closed if either secret is missing. It verifies `X-DGateway-Signature` HMAC-SHA256 over the raw body, re-fetches the transaction from DGateway, and only then applies `apply_dgateway_store_payment`. It issues tickets only for verified `completed` collections whose product id/slug, amount, currency, quantity, buyer email, and event capacity match an enabled `dgateway_store_mappings` row. Unknown products, mixed carts, tips/coupons that change the expected total, test payments, and capacity failures are recorded as blocked rather than issuing tickets. `failed` is final. Retries are idempotent by DGateway reference.
+
+Map each DGateway product to a Tank Tickets event in the admin UI. The initial mapping is product `49` / `ruhindo-beach-vibes-740d` → Rukindo Beach Vibes, UGX 20,000, one ticket per unit. Buyers retrieve the QR ticket with the DGateway reference and checkout email; admins can also resend from Orders. Automatic server-side email/WhatsApp delivery is not configured.
 
 ### In-app API mode
 

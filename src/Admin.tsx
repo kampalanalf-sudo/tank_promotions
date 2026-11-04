@@ -2,6 +2,7 @@ import { Check, Copy, ExternalLink, LogOut, Pencil, Trash2, X } from "lucide-rea
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DoorPanel, EventForm, Logo, Notice, OrdersTable, Poster, Spinner, eventSummary } from "./components";
 import { EventStatusPill, eventLink } from "./Dashboard";
+import StoreFulfilmentAdmin from "./StoreFulfilmentAdmin";
 import { api } from "./lib/api";
 import { API_BASE_URL, DGATEWAY_STORE_URL } from "./lib/config";
 import { requestDisburse } from "./lib/dgateway";
@@ -401,7 +402,7 @@ export default function Admin({
                     <h2 className="text-xs font-extrabold uppercase tracking-wider">Hosted DGateway store</h2>
                     <p className="mt-2 text-xs leading-5 text-black/60">
                       {DGATEWAY_STORE_URL
-                        ? "Paid Get tickets clicks redirect to this DGateway store. DGateway handles payment. Automatic Tank Tickets QR issuance still requires a verified webhook/order mapping."
+                        ? "Paid Get tickets clicks redirect to DGateway. Mapped products are fulfilled by the Supabase store webhook after verified payment."
                         : "Hosted-store redirect is disabled. Paid checkout uses the in-app /api routes."}
                     </p>
                     {DGATEWAY_STORE_URL && (
@@ -410,9 +411,10 @@ export default function Admin({
                       </a>
                     )}
                   </div>
+                  <StoreFulfilmentAdmin events={events} />
                   <div className="mt-6 rounded border border-black/12 bg-white/60 p-5">
-                    <h2 className="text-xs font-extrabold uppercase tracking-wider">Webhook endpoint</h2>
-                    <p className="mt-2 text-xs leading-5 text-black/60">Register this URL in DGateway → My Apps → Settings.</p>
+                    <h2 className="text-xs font-extrabold uppercase tracking-wider">In-app API webhook endpoint</h2>
+                    <p className="mt-2 text-xs leading-5 text-black/60">Only for the separate /api checkout mode. Hosted-store payments use the Supabase webhook above.</p>
                     <div className="mt-3 flex items-center gap-2">
                       <input className="field min-w-0 font-mono text-xs" readOnly value={webhookUrl} aria-label="DGateway webhook endpoint" />
                       <button type="button" onClick={() => copyText(webhookUrl, "wh")} className="btn btn-dark shrink-0 px-3 text-xs">
