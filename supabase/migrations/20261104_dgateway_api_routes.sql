@@ -41,7 +41,7 @@ create or replace function public.create_order(
   p_external_ref text
 ) returns json
 language plpgsql
-security invoker
+security definer
 set search_path = public
 as $$
 declare
