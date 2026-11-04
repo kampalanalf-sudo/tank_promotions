@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { DoorPanel, EventForm, Logo, Notice, OrdersTable, Poster, Spinner, eventSummary } from "./components";
 import { EventStatusPill, eventLink } from "./Dashboard";
 import { api } from "./lib/api";
-import { API_BASE_URL } from "./lib/config";
+import { API_BASE_URL, DGATEWAY_STORE_URL } from "./lib/config";
 import { requestDisburse } from "./lib/dgateway";
 import { cleanPhone, isValidGatewayPhone } from "./lib/phone";
 import { ugx } from "./lib/format";
@@ -397,6 +397,19 @@ export default function Admin({
                     Paid tickets use DGateway. A ticket is issued only after the server verifies the payment.
                     There is no manual, SMS, or offline payment confirmation.
                   </p>
+                  <div className="mt-6 rounded border border-black/12 bg-white/60 p-5">
+                    <h2 className="text-xs font-extrabold uppercase tracking-wider">Hosted DGateway store</h2>
+                    <p className="mt-2 text-xs leading-5 text-black/60">
+                      {DGATEWAY_STORE_URL
+                        ? "Paid Get tickets clicks redirect to this DGateway store. DGateway handles payment. Automatic Tank Tickets QR issuance still requires a verified webhook/order mapping."
+                        : "Hosted-store redirect is disabled. Paid checkout uses the in-app /api routes."}
+                    </p>
+                    {DGATEWAY_STORE_URL && (
+                      <a className="mt-3 inline-flex items-center gap-1 text-xs font-bold underline" href={DGATEWAY_STORE_URL} target="_blank" rel="noreferrer">
+                        Open DGateway store <ExternalLink size={13} />
+                      </a>
+                    )}
+                  </div>
                   <div className="mt-6 rounded border border-black/12 bg-white/60 p-5">
                     <h2 className="text-xs font-extrabold uppercase tracking-wider">Webhook endpoint</h2>
                     <p className="mt-2 text-xs leading-5 text-black/60">Register this URL in DGateway → My Apps → Settings.</p>

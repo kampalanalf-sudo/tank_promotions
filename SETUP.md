@@ -2,6 +2,31 @@
 
 ## Architecture
 
+There are two paid-checkout modes:
+
+1. **Hosted DGateway store mode (default):** paid “Get tickets” clicks redirect to the DGateway store, e.g. `https://dgatewayadmin.desispay.com/store/shop/tanktickets?products`. DGateway handles the payment page. This works with GitHub Pages because the browser only follows a link.
+2. **In-app API mode:** paid checkout calls server routes under `/api`. The browser never receives the DGateway API key and never calls DGateway directly.
+
+Free events always use the internal checkout because no payment is required.
+
+### Hosted DGateway store mode
+
+Set:
+
+```env
+VITE_DGATEWAY_STORE_URL=https://dgatewayadmin.desispay.com/store/shop/tanktickets?products
+```
+
+To disable hosted-store redirects and use the in-app API checkout instead:
+
+```env
+VITE_DGATEWAY_STORE_URL=off
+```
+
+Important: redirecting to the DGateway store lets DGateway collect payment, but Tank Tickets will not automatically issue a QR ticket unless DGateway also sends a verified webhook to a server endpoint that can match the store purchase to a Tank Tickets order/event. GitHub Pages alone cannot receive that webhook. If you need automatic Tank Tickets QR issuance, use the in-app API mode or deploy a webhook receiver and configure the DGateway store product/webhook mapping.
+
+### In-app API mode
+
 Paid checkout calls server routes under `/api`. The browser never receives the DGateway API key and never calls DGateway directly.
 
 - `POST /api/payments/collect` creates/reuses an order, requests a DGateway collection, and stores the returned `reference`.
