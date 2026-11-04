@@ -10,5 +10,5 @@
     "verbatimModuleSyntax": true,
     "noEmit": true
   },
-  "include": ["server", "api"]
+  "include": ["server", "api", "supabase/functions/_shared/storeCore.ts"]
 }

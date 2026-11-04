@@ -16,4 +16,10 @@ describe('checkout mode', () => {
     expect(checkoutModeFor(20000, '')).toEqual({ kind: 'internal' });
     expect(checkoutModeFor(20000, '   ')).toEqual({ kind: 'internal' });
   });
+
+  it('prefers the mapped product checkout over the generic store', () => {
+    const product = 'https://dgatewayadmin.desispay.com/store/pay/ruhindo-beach-vibes-740d';
+    expect(checkoutModeFor(20000, STORE, product)).toEqual({ kind: 'hosted', url: product });
+    expect(checkoutModeFor(0, STORE, product)).toEqual({ kind: 'internal' });
+  });
 });
