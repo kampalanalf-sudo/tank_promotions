@@ -67,15 +67,26 @@ For local browser testing, leave `VITE_API_BASE_URL` empty so the browser calls 
 
 `npm run dev` only starts Vite. It does not start the payments API. Run `npm run dev:api` in a separate terminal/session and keep it open.
 
-If `npm run dev:api` says `Missing script: "dev:api"`, the checkout does not contain the server-route branch yet. From the repository root:
+If `npm run dev:api` says `Missing script: "dev:api"`, the checkout does not contain the server-route branch yet. If you are on the old `deploy` branch and Git says local changes to `.env`, `package.json`, or `package-lock.json` would be overwritten, back up `.env` outside the repository and stash the old branch changes first:
 
 ```sh
+cd ~/tank
+BACKUP="$HOME/tank-env-$(date +%Y%m%d-%H%M%S).bak"
+cp .env "$BACKUP"
+chmod 600 "$BACKUP"
+git stash push -u -m "deploy local changes before switching to payments API branch"
+
 git fetch origin
-git switch arena/25a297ce-tank-promotions || git switch --track -c arena/25a297ce-tank-promotions origin/arena/25a297ce-tank-promotions
+git switch arena/25a297ce-tank-promotions || git switch -c arena/25a297ce-tank-promotions --track origin/arena/25a297ce-tank-promotions
 git pull --ff-only origin arena/25a297ce-tank-promotions
+
+cp "$BACKUP" .env
+chmod 600 .env
 npm ci
 node -e "console.log(require('./package.json').scripts['dev:api'] || 'MISSING')"
 ```
+
+Do not run `git stash pop` on the API branch; it may reapply old `deploy` package files. The API branch ignores `.env`, so `git ls-files .env` should print nothing.
 
 The last command must print the `node --env-file-if-exists=... server/dev.ts` command. Then use two Termux sessions:
 
@@ -106,6 +117,30 @@ npm run verify:build
 npm run check:server
 npm run test:server
 ```
+
+## GitHub Pages frontend + separate API
+
+GitHub Pages is static hosting. It does not run `server/dev.ts`, does not read your computer/Termux `.env`, and cannot serve `/api/...`.
+
+To use GitHub Pages for the frontend:
+
+1. Deploy the `api/` routes to a server host (for example Vercel).
+2. Set the private server environment variables on that API host, not in GitHub Pages.
+3. In GitHub → **Settings → Secrets and variables → Actions → Variables**, add a repository variable:
+
+   ```text
+   VITE_API_BASE_URL=https://YOUR_PUBLIC_API_HOST
+   ```
+
+   This value is public and is compiled into the browser bundle. Never put `DGATEWAY_API_KEY` or `SUPABASE_SERVICE_ROLE_KEY` in a `VITE_` variable.
+4. Merge the server-route branch and let the Pages workflow rebuild the frontend.
+5. Register the webhook URL:
+
+   ```text
+   https://YOUR_PUBLIC_API_HOST/api/webhooks/dgateway
+   ```
+
+If `VITE_API_BASE_URL` is empty, the browser calls same-origin `/api`. That works only when the frontend and API are served from the same host; it does not work on GitHub Pages alone.
 
 ## Deploying the API
 
