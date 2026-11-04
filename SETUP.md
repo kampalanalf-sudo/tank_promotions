@@ -24,8 +24,11 @@ SUPABASE_URL=https://xmfvxypioitbsnsbgioq.supabase.co
 SUPABASE_ANON_KEY=...                # public anon key
 SUPABASE_SERVICE_ROLE_KEY=...        # server-only service role key
 ADMIN_EMAIL=admin@tanktickets.site
-APP_URL=https://tanktickets.site     # public origin used to build callback_url
+API_PUBLIC_URL=https://YOUR_PUBLIC_API_HOST # public API origin used to build callback_url
+APP_URL=https://YOUR_PUBLIC_API_HOST        # fallback for API_PUBLIC_URL
 ```
+
+If the frontend and API are on the same host, `API_PUBLIC_URL` can be that shared origin. If you use GitHub Pages for the frontend and a separate API host, `API_PUBLIC_URL` must be the API host, for example `https://api.tanktickets.site`. Do not set it to `https://tanktickets.site` unless that origin actually serves `/api/webhooks/dgateway`.
 
 Browser build variables:
 
@@ -125,7 +128,7 @@ GitHub Pages is static hosting. It does not run `server/dev.ts`, does not read y
 To use GitHub Pages for the frontend:
 
 1. Deploy the `api/` routes to a server host (for example Vercel).
-2. Set the private server environment variables on that API host, not in GitHub Pages.
+2. Set the private server environment variables on that API host, not in GitHub Pages. Set `API_PUBLIC_URL` to the public API origin so DGateway callbacks go to the API host.
 3. In GitHub → **Settings → Secrets and variables → Actions → Variables**, add a repository variable:
 
    ```text
@@ -190,7 +193,7 @@ Currency routing is automatic: UGX/KES/TZS mobile money, USD Stripe card. Mobile
 
 ## Current deployment status
 
-As of 2026-11-04, the Supabase migrations are applied to `xmfvxypioitbsnsbgioq`. The old Supabase Edge Functions (`dgateway-collect`, `dgateway-status`, `dgateway-webhook`) are legacy and no longer used by the browser.
+As of 2026-11-04, the Supabase migrations are applied to `xmfvxypioitbsnsbgioq`. On this branch, the old Supabase Edge Functions (`dgateway-collect`, `dgateway-status`, `dgateway-webhook`) are legacy and no longer used by the browser. The currently published `main` GitHub Pages site may still use those Edge Functions until this branch is merged.
 
 Paid collections are **not live** until the `/api` server is deployed and `DGATEWAY_API_KEY` is configured in the server host environment. Until then the API fails closed with `PAYMENT_NOT_CONFIGURED` and the checkout shows an honest unavailable message. Complete a sandbox collection plus verified webhook/status round-trip before declaring payments live.
 

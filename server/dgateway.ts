@@ -9,6 +9,7 @@ export type ServerEnv = {
   SUPABASE_ANON_KEY?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
   APP_URL?: string;
+  API_PUBLIC_URL?: string;
   VERCEL_URL?: string;
   VERCEL_PROJECT_PRODUCTION_URL?: string;
   ADMIN_EMAIL?: string;
@@ -176,7 +177,8 @@ export async function verifyWebhookSignature(raw: string, signature: string | nu
 }
 
 export function publicBaseUrl(env: ServerEnv, req: Request) {
-  const configured = env.APP_URL?.trim();
+  // For a separate API host, this must be the API origin, not the GitHub Pages frontend origin.
+  const configured = env.API_PUBLIC_URL?.trim() || env.APP_URL?.trim();
   if (configured) return configured.replace(/\/$/, "");
   const vercel = env.VERCEL_PROJECT_PRODUCTION_URL || env.VERCEL_URL;
   if (vercel) return `https://${vercel}`.replace(/\/$/, "");
