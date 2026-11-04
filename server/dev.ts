@@ -7,6 +7,17 @@ import { json } from "./http";
 const env = process.env as ServerEnv;
 const port = Number(process.env.PORT || 8787);
 
+const requiredServerEnv = ["DGATEWAY_API_KEY", "SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"] as const;
+const missingServerEnv = requiredServerEnv.filter((key) => !env[key]?.trim());
+if (missingServerEnv.length) {
+  console.warn(`payments-api: missing server env (${missingServerEnv.join(", ")}); payment routes will fail closed.`);
+} else {
+  console.log("payments-api: required server env is present.");
+}
+if (!env.DGATEWAY_WEBHOOK_SECRET?.trim()) {
+  console.warn("payments-api: DGATEWAY_WEBHOOK_SECRET is not set; webhooks will be verified by re-fetching the transaction from DGateway.");
+}
+
 async function toRequest(req: IncomingMessage) {
   const chunks: Buffer[] = [];
   for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));

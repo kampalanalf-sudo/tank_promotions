@@ -53,11 +53,15 @@ The second migration adds `orders.currency`, `orders.last_status_check_at`, and 
 
 ## Local development
 
+Create a root `.env` file (it is gitignored). `npm run dev:api` loads `.env` and `.env.local` automatically. Vite loads only `VITE_*` variables into the browser; private server variables must stay unprefixed.
+
 ```sh
 npm ci
-npm run dev:api     # server-only payments API on 0.0.0.0:8787
+npm run dev:api     # server-only payments API on 0.0.0.0:8787, reads .env
 npm run dev         # Vite on 0.0.0.0:5173, proxies /api to 8787
 ```
+
+For local browser testing, leave `VITE_API_BASE_URL` empty so the browser calls same-origin `/api` and Vite proxies to the API. DGateway cannot deliver webhooks to `localhost`; use the 10-second status polling locally, or expose the API through a public HTTPS URL and set `APP_URL` to that origin if you need webhook delivery.
 
 Checks:
 
