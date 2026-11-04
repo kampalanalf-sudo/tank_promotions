@@ -74,7 +74,7 @@ function rowToOrder(r: any): Order {
     status: r.status,
     paymentRef: r.dgateway_ref || r.payment_ref || r.zenga_ref || "",
     dgatewayRef: r.dgateway_ref || "",
-    provider: r.provider || "iotec",
+    provider: r.provider || "",
     providerRef: r.provider_ref || "",
     externalRef: r.external_ref || "",
     createdAt: r.created_at,

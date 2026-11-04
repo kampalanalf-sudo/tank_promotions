@@ -44,12 +44,14 @@ create table if not exists public.orders (
   amount integer not null check (amount >= 0),
   status text not null default 'PENDING' check (status in ('PENDING', 'SUCCEEDED', 'FAILED', 'CHECKED_IN')),
   dgateway_ref text not null default '',
-  provider text not null default 'iotec',
+  provider text not null default '',
   provider_ref text not null default '',
   collection_started_at timestamptz,
   payment_ref text not null default '',
   zenga_ref text not null default '',
   external_ref text not null default '',
+  currency text not null default 'UGX',
+  last_status_check_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -61,6 +63,27 @@ create unique index if not exists orders_external_ref_unique_idx
   on public.orders (external_ref) where external_ref <> '';
 create unique index if not exists orders_dgateway_ref_unique_idx
   on public.orders (dgateway_ref) where dgateway_ref <> '';
+
+create table if not exists public.payouts (
+  id uuid primary key default gen_random_uuid(),
+  external_ref text not null unique,
+  dgateway_ref text not null default '',
+  amount integer not null check (amount > 0),
+  currency text not null check (currency in ('UGX', 'KES', 'TZS', 'RWF', 'USD')),
+  phone_number text not null,
+  description text not null default '',
+  status text not null default 'PENDING' check (status in ('PENDING', 'COMPLETED', 'FAILED')),
+  provider text not null default '',
+  provider_ref text not null default '',
+  created_by uuid references auth.users on delete set null,
+  last_status_check_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create unique index if not exists payouts_dgateway_ref_unique_idx
+  on public.payouts (dgateway_ref) where dgateway_ref <> '';
+create index if not exists payouts_status_idx on public.payouts (status);
+create index if not exists payouts_created_by_idx on public.payouts (created_by);
 
 create table if not exists public.briefs (
   id uuid primary key default gen_random_uuid(),
@@ -91,9 +114,11 @@ insert into public.settings (id) values (1) on conflict (id) do nothing;
 -- Ensure columns exist if updating existing database
 alter table public.orders add column if not exists collection_started_at timestamptz;
 alter table public.orders add column if not exists dgateway_ref text not null default '';
-alter table public.orders add column if not exists provider text not null default 'iotec';
+alter table public.orders add column if not exists provider text not null default '';
 alter table public.orders add column if not exists provider_ref text not null default '';
 alter table public.orders add column if not exists payment_ref text not null default '';
+alter table public.orders add column if not exists currency text not null default 'UGX';
+alter table public.orders add column if not exists last_status_check_at timestamptz;
 alter table public.orders add column if not exists updated_at timestamptz not null default now();
 
 
@@ -154,6 +179,7 @@ create trigger events_guard before insert or update on public.events
 alter table public.profiles enable row level security;
 alter table public.events enable row level security;
 alter table public.orders enable row level security;
+alter table public.payouts enable row level security;
 alter table public.briefs enable row level security;
 alter table public.settings enable row level security;
 
@@ -181,6 +207,13 @@ create policy "orders read" on public.orders for select using (
   or is_admin()
   or exists (select 1 from events e where e.id = orders.event_id and e.owner_id = auth.uid())
 );
+
+drop policy if exists "payouts admin read" on public.payouts;
+create policy "payouts admin read" on public.payouts for select to authenticated
+  using (is_admin());
+revoke all on public.payouts from anon;
+grant select on public.payouts to authenticated;
+grant all on public.payouts to service_role;
 
 drop policy if exists "briefs insert" on public.briefs;
 create policy "briefs insert" on public.briefs for insert to anon, authenticated with check (status = 'New');
@@ -223,10 +256,10 @@ begin
   end if;
   if p_qty is null or p_qty < 1 or p_qty > 10 then raise exception 'You can buy 1 to 10 tickets at a time.'; end if;
   if p_name is null or char_length(trim(p_name)) not between 1 and 80 then raise exception 'A valid guest name is required.'; end if;
-  if p_phone is null or p_phone !~ '^256(7[0-9]{8}|111777(77[0-9]|99[0-9]|88[0-9]))$' then
-    raise exception 'A valid Ugandan mobile number is required.';
+  if p_phone is null or p_phone !~ '^([+]?256[17][0-9]{8}|0[17][0-9]{8}|[+]?2547[0-9]{8}|[+]?255[67][0-9]{8}|[+]?2507[2389][0-9]{7}|0111777(77|99|88)[0-9]|256111777(77|99|88)[0-9])$' then
+    raise exception 'A valid Mobile Money number is required.';
   end if;
-  if p_email is not null and char_length(p_email) > 0 and p_email !~ '^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$' then
+  if p_email is not null and char_length(p_email) > 0 and p_email !~ '^[^[:space:]@]+@[^[:space:]@]+[.][^[:space:]@]+$' then
     raise exception 'A valid email address is required.';
   end if;
 
@@ -250,9 +283,9 @@ begin
   if taken + p_qty > ev.capacity then raise exception 'Sorry, not enough tickets left.'; end if;
 
   amt := ev.price * p_qty;
-  insert into orders (code, event_id, event_title, user_id, name, phone, email, qty, amount, status, external_ref)
+  insert into orders (code, event_id, event_title, user_id, name, phone, email, qty, amount, status, external_ref, currency)
   values (p_code, ev.id, ev.title, auth.uid(), trim(p_name), p_phone, lower(coalesce(p_email, '')), p_qty, amt,
-    case when amt = 0 then 'SUCCEEDED' else 'PENDING' end, p_external_ref)
+    case when amt = 0 then 'SUCCEEDED' else 'PENDING' end, p_external_ref, 'UGX')
   returning * into r;
   return row_to_json(r);
 end $$;

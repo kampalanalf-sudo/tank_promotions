@@ -1,5 +1,10 @@
 /** Uganda phone number utilities */
 
+/** Keep the user's leading 0 or +country code for DGateway. */
+export function cleanPhone(input: string) {
+  return input.trim().replace(/[\s().-]/g, "");
+}
+
 export function toMsisdn(input: string) {
   const d = input.replace(/\D/g, "");
   if (d.startsWith("256") && d.length >= 12) return d.slice(0, 12);
@@ -15,6 +20,12 @@ export function isValidUgPhone(input: string) {
   // DGateway sandbox test phone numbers
   if (["256111777771", "256111777991", "256111777881"].includes(msisdn)) return true;
   return false;
+}
+
+/** DGateway accepts leading-zero local numbers and +country numbers across UG/KE/TZ/RW. */
+export function isValidGatewayPhone(input: string) {
+  const phone = cleanPhone(input);
+  return /^(?:0[17]\d{8}|\+?256[17]\d{8}|\+?2547\d{8}|\+?255[67]\d{8}|\+?2507[2389]\d{7}|0111777(?:77|99|88)\d|256111777(?:77|99|88)\d)$/.test(phone);
 }
 
 export function detectNetwork(msisdn: string): "MTN" | "Airtel" | "Other" {

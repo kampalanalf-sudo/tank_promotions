@@ -6,6 +6,8 @@ import { Notice, Poster, Spinner } from "./components";
 import { EventStatusPill, eventLink } from "./Dashboard";
 import { EventCard } from "./Home";
 import { api } from "./lib/api";
+import { checkoutModeFor } from "./lib/checkoutMode";
+import { DGATEWAY_STORE_URL } from "./lib/config";
 import { calendarLink, dateParts, mapsLink, ugx } from "./lib/format";
 import type { Session, Settings, TankEvent } from "./lib/types";
 import { toMsisdn } from "./lib/phone";
@@ -79,6 +81,15 @@ export default function EventPage({ id, session, settings }: { id: string; sessi
   const soldPct = Math.min(100, Math.round((event.sold / event.capacity) * 100));
   const isOwner = session && (session.userId === event.ownerId || session.role === "admin");
   const buyLabel = !live ? "Not on sale yet" : ended ? "Event ended" : left === 0 ? "Sold out" : event.price === 0 ? "Get free tickets" : "Get tickets";
+  const checkoutMode = checkoutModeFor(event.price, DGATEWAY_STORE_URL);
+  const openCheckout = () => {
+    if (!canBuy) return;
+    if (checkoutMode.kind === "hosted") {
+      window.location.assign(checkoutMode.url);
+      return;
+    }
+    setBuying(true);
+  };
 
   return (
     <main className="min-h-screen bg-[#efe8d8] pb-24 text-[#0c0c0b] lg:pb-0">
@@ -114,10 +125,19 @@ export default function EventPage({ id, session, settings }: { id: string; sessi
               <p className="text-right text-sm text-black/55"><Users size={14} className="mr-1 inline" />{left === 0 ? "Sold out" : `${left} left`}</p>
             </div>
             <div className="mt-4 h-1.5 bg-black/10"><div className="h-full bg-[#c9a227]" style={{ width: `${soldPct}%` }} /></div>
-            <button onClick={() => setBuying(true)} disabled={!canBuy} className="btn btn-gold mt-5 w-full text-sm disabled:opacity-45"><Ticket size={17} /> {buyLabel}</button>
+            <button onClick={openCheckout} disabled={!canBuy} className="btn btn-gold mt-5 w-full text-sm disabled:opacity-45"><Ticket size={17} /> {buyLabel}</button>
             <div className="mt-3 text-center text-xs text-black/60">
               {event.price === 0 ? (
                 <p>Free entry · Instant QR ticket by email & WhatsApp</p>
+              ) : checkoutMode.kind === "hosted" ? (
+                <div className="space-y-1">
+                  <p className="font-bold text-black/80">
+                    Secure checkout on DGateway · MTN / Airtel Mobile Money
+                  </p>
+                  <p className="text-[11px] text-black/50">
+                    You’ll be redirected to the DGateway store to pay. Tickets are issued only after verified payment.
+                  </p>
+                </div>
               ) : (
                 <div className="space-y-1">
                   <p className="font-bold text-black/80">
@@ -170,7 +190,7 @@ export default function EventPage({ id, session, settings }: { id: string; sessi
           <p className="truncate text-xs text-white/60">{d.day} {d.month} · {event.venue}</p>
           <p className="font-extrabold">{ugx(event.price)}</p>
         </div>
-        <button onClick={() => setBuying(true)} disabled={!canBuy} className="btn btn-gold min-h-0! py-3 disabled:opacity-45">{buyLabel}</button>
+        <button onClick={openCheckout} disabled={!canBuy} className="btn btn-gold min-h-0! py-3 disabled:opacity-45">{buyLabel}</button>
       </div>
 
       <SiteFooter session={session} />
