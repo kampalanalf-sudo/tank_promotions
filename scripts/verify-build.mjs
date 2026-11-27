@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 
 const html = readFileSync('dist/index.html', 'utf8');
 for (const text of [
+  'https://xmfvxypioitbsnsbgioq.supabase.co',
+  'HMO_h5MMN5GgmJaQiK-0X9uJHkqPN-Zby2Tzo0inBBk',
   'zengapay-collect',
   'zengapay-status',
   'zengapay-transfer',
@@ -12,7 +14,7 @@ for (const text of [
   'Check your phone and approve the prompt',
   'Payment verified',
 ]) {
-  assert(html.includes(text), `Missing ZengaPay checkout marker: ${text}`);
+  assert(html.includes(text), `Missing ZengaPay or Supabase production marker: ${text}`);
 }
 for (const text of [
   'DGateway',
@@ -27,10 +29,7 @@ for (const text of [
 ]) {
   assert(!html.includes(text), `Old or server-only payment logic still present: ${text}`);
 }
-const sha = process.env.VITE_BUILD_SHA || '%VITE_BUILD_SHA%';
-assert(
-  html.includes(`<meta name="tank-build" content="${sha}"`) || html.includes('<meta name="tank-build" content="development"'),
-  'Build version marker is missing',
-);
+const sha = process.env.VITE_BUILD_SHA || 'development';
+assert(html.includes(`<meta name="tank-build" content="${sha}"`), 'Build version marker is missing');
 assert.equal(readFileSync('dist/CNAME', 'utf8').trim(), 'tanktickets.site');
-console.log(`Verified production bundle (${sha}): server-only ZengaPay checkout, no DGateway/manual fallback, custom domain preserved.`);
+console.log(`Verified production bundle (${sha}): valid Supabase anon key, server-only ZengaPay checkout, custom domain preserved.`);
