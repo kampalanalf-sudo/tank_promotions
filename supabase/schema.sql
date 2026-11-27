@@ -56,30 +56,36 @@ create table if not exists public.orders (
   updated_at timestamptz not null default now()
 );
 create index if not exists orders_event_idx on public.orders (event_id);
+create index if not exists orders_zenga_ref_idx on public.orders (zenga_ref);
 create index if not exists orders_dgateway_ref_idx on public.orders (dgateway_ref);
 create index if not exists orders_code_idx on public.orders (code);
 create index if not exists orders_external_ref_idx on public.orders (external_ref);
 create unique index if not exists orders_external_ref_unique_idx
   on public.orders (external_ref) where external_ref <> '';
+create unique index if not exists orders_zenga_ref_unique_idx
+  on public.orders (zenga_ref) where zenga_ref <> '';
 create unique index if not exists orders_dgateway_ref_unique_idx
   on public.orders (dgateway_ref) where dgateway_ref <> '';
 
 create table if not exists public.payouts (
   id uuid primary key default gen_random_uuid(),
   external_ref text not null unique,
+  zenga_ref text not null default '',
   dgateway_ref text not null default '',
   amount integer not null check (amount > 0),
   currency text not null check (currency in ('UGX', 'KES', 'TZS', 'RWF', 'USD')),
   phone_number text not null,
   description text not null default '',
   status text not null default 'PENDING' check (status in ('PENDING', 'COMPLETED', 'FAILED')),
-  provider text not null default '',
+  provider text not null default 'zengapay',
   provider_ref text not null default '',
   created_by uuid references auth.users on delete set null,
   last_status_check_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+create unique index if not exists payouts_zenga_ref_unique_idx
+  on public.payouts (zenga_ref) where zenga_ref <> '';
 create unique index if not exists payouts_dgateway_ref_unique_idx
   on public.payouts (dgateway_ref) where dgateway_ref <> '';
 create index if not exists payouts_status_idx on public.payouts (status);
@@ -256,8 +262,8 @@ begin
   end if;
   if p_qty is null or p_qty < 1 or p_qty > 10 then raise exception 'You can buy 1 to 10 tickets at a time.'; end if;
   if p_name is null or char_length(trim(p_name)) not between 1 and 80 then raise exception 'A valid guest name is required.'; end if;
-  if p_phone is null or p_phone !~ '^([+]?256[17][0-9]{8}|0[17][0-9]{8}|[+]?2547[0-9]{8}|[+]?255[67][0-9]{8}|[+]?2507[2389][0-9]{7}|0111777(77|99|88)[0-9]|256111777(77|99|88)[0-9])$' then
-    raise exception 'A valid Mobile Money number is required.';
+  if p_phone is null or p_phone !~ '^([+]?256|0)(7[0-9]{8}|39[0-9]{7}|20[0-9]{7})$' then
+    raise exception 'Enter a valid Ugandan MTN or Airtel Mobile Money number.';
   end if;
   if p_email is not null and char_length(p_email) > 0 and p_email !~ '^[^[:space:]@]+@[^[:space:]@]+[.][^[:space:]@]+$' then
     raise exception 'A valid email address is required.';
@@ -283,9 +289,16 @@ begin
   if taken + p_qty > ev.capacity then raise exception 'Sorry, not enough tickets left.'; end if;
 
   amt := ev.price * p_qty;
-  insert into orders (code, event_id, event_title, user_id, name, phone, email, qty, amount, status, external_ref, currency)
-  values (p_code, ev.id, ev.title, auth.uid(), trim(p_name), p_phone, lower(coalesce(p_email, '')), p_qty, amt,
-    case when amt = 0 then 'SUCCEEDED' else 'PENDING' end, p_external_ref, 'UGX')
+  insert into orders (
+    code, event_id, event_title, user_id, name, phone, email, qty, amount,
+    status, provider, external_ref, currency
+  )
+  values (
+    p_code, ev.id, ev.title, auth.uid(), trim(p_name), p_phone, lower(coalesce(p_email, '')), p_qty, amt,
+    case when amt = 0 then 'SUCCEEDED' else 'PENDING' end,
+    case when amt = 0 then 'free' else 'zengapay' end,
+    p_external_ref, 'UGX'
+  )
   returning * into r;
   return row_to_json(r);
 end $$;

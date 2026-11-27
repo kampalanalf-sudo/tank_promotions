@@ -2,7 +2,7 @@ import { Mail, MessageCircle, RefreshCw, Send } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Notice, Spinner } from "./components";
 import { api } from "./lib/api";
-import type { TicketDelivery, TicketDeliveryStatus } from "./lib/storeFulfilment";
+import type { TicketDelivery, TicketDeliveryStatus } from "./lib/ticketDelivery";
 
 function statusTone(status: string) {
   if (status === "sent") return "text-emerald-700";
@@ -70,7 +70,7 @@ export default function TicketDeliveryAdmin() {
       <section className="rounded border border-black/12 bg-white/60 p-5">
         <h2 className="text-xs font-extrabold uppercase tracking-wider">Automatic server delivery</h2>
         <p className="mt-2 text-xs leading-5 text-black/60">
-          After a verified payment, Supabase generates a PDF ticket, emails it with Resend, and sends a WhatsApp template with the ticket and secure PDF link. Delivery is idempotent and can be retried below.
+          After a verified ZengaPay payment, Supabase generates a PDF ticket, emails it with Resend, and sends a WhatsApp template with the ticket and secure PDF link. Delivery is idempotent and can be retried below.
         </p>
         {status && (
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -98,9 +98,9 @@ export default function TicketDeliveryAdmin() {
 
       <form onSubmit={submit} className="rounded border border-black/12 bg-white/60 p-5">
         <h2 className="text-xs font-extrabold uppercase tracking-wider">Deliver / resend a ticket</h2>
-        <p className="mt-2 text-xs text-black/60">Enter a Tank order ID or DGateway payment reference. This forces a fresh email/WhatsApp send and regenerates the secure PDF link.</p>
+        <p className="mt-2 text-xs text-black/60">Enter a Tank order UUID, ticket code (e.g. TNK-ABCD2345), or ZengaPay transaction reference. This forces a fresh email/WhatsApp send and regenerates the secure PDF link.</p>
         <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-          <input className="field min-w-0 font-mono text-xs" value={target} onChange={(e) => setTarget(e.target.value)} placeholder="order UUID or DGateway reference" required />
+          <input className="field min-w-0 font-mono text-xs" value={target} onChange={(e) => setTarget(e.target.value)} placeholder="order UUID, TNK-… code, or ZengaPay reference" required />
           <button disabled={busy} className="btn btn-dark shrink-0 text-sm disabled:opacity-50"><Send size={14} /> {busy ? "Sending…" : "Send ticket"}</button>
         </div>
       </form>

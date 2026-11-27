@@ -6,10 +6,7 @@ import { Notice, Poster, Spinner } from "./components";
 import { EventStatusPill, eventLink } from "./Dashboard";
 import { EventCard } from "./Home";
 import { api } from "./lib/api";
-import { checkoutModeFor } from "./lib/checkoutMode";
-import { DGATEWAY_STORE_URL } from "./lib/config";
 import { calendarLink, dateParts, mapsLink, ugx } from "./lib/format";
-import type { HostedTicketProduct } from "./lib/storeFulfilment";
 import type { Session, Settings, TankEvent } from "./lib/types";
 import { toMsisdn } from "./lib/phone";
 import { SiteFooter, SiteHeader, WhatsAppFab } from "./SiteChrome";
@@ -17,19 +14,16 @@ import { SiteFooter, SiteHeader, WhatsAppFab } from "./SiteChrome";
 export default function EventPage({ id, session, settings }: { id: string; session: Session | null; settings: Settings | null }) {
   const [event, setEvent] = useState<TankEvent | null | undefined>(undefined);
   const [more, setMore] = useState<TankEvent[]>([]);
-  const [hostedProduct, setHostedProduct] = useState<HostedTicketProduct | null>(null);
   const [buying, setBuying] = useState(false);
   const [shared, setShared] = useState(false);
 
   const load = useCallback(async () => {
-    const [ev, list, products] = await Promise.all([
+    const [ev, list] = await Promise.all([
       api.getEvent(id, session).catch(() => null),
       api.listEvents("public", session).catch(() => []),
-      api.hostedTicketProducts().catch(() => []),
     ]);
     setEvent(ev);
     setMore(list.filter((e) => e.id !== id).slice(0, 3));
-    setHostedProduct(products.find((p) => p.event_id === id) || null);
   }, [id, session]);
 
   useEffect(() => {
@@ -88,13 +82,8 @@ export default function EventPage({ id, session, settings }: { id: string; sessi
   const soldPct = Math.min(100, Math.round((event.sold / event.capacity) * 100));
   const isOwner = session && (session.userId === event.ownerId || session.role === "admin");
   const buyLabel = !live ? "Not on sale yet" : ended ? "Event ended" : left === 0 ? "Sold out" : event.price === 0 ? "Get free tickets" : "Get tickets";
-  const checkoutMode = checkoutModeFor(event.price, DGATEWAY_STORE_URL, hostedProduct?.checkout_url);
   const openCheckout = () => {
     if (!canBuy) return;
-    if (checkoutMode.kind === "hosted") {
-      window.location.assign(checkoutMode.url);
-      return;
-    }
     setBuying(true);
   };
 
@@ -135,24 +124,14 @@ export default function EventPage({ id, session, settings }: { id: string; sessi
             <button onClick={openCheckout} disabled={!canBuy} className="btn btn-gold mt-5 w-full text-sm disabled:opacity-45"><Ticket size={17} /> {buyLabel}</button>
             <div className="mt-3 text-center text-xs text-black/60">
               {event.price === 0 ? (
-                <p>Free entry · Instant QR ticket by email & WhatsApp</p>
-              ) : checkoutMode.kind === "hosted" ? (
-                <div className="space-y-1">
-                  <p className="font-bold text-black/80">
-                    Secure checkout on DGateway · MTN / Airtel Mobile Money
-                  </p>
-                  <p className="text-[11px] text-black/50">
-                    You’ll be redirected to DGateway to pay. Tickets are issued only after verified payment.{" "}
-                    <a href="#/store-ticket" className="font-bold underline">Already paid? Find your ticket</a>.
-                  </p>
-                </div>
+                <p>Free entry · Instant QR & PDF ticket</p>
               ) : (
                 <div className="space-y-1">
                   <p className="font-bold text-black/80">
-                    Pay with MTN or Airtel Mobile Money · Direct prompt to your phone
+                    Pay with MTN Mobile Money or Airtel Money · Direct prompt to your phone
                   </p>
                   <p className="text-[11px] text-black/50">
-                    QR ticket after verified payment · Save or share to WhatsApp
+                    Instant QR & downloadable PDF ticket after verified payment
                   </p>
                 </div>
               )}

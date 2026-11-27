@@ -21,13 +21,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       VITE_BUILD_SHA: ${{ github.sha }}
-      # Public origin of the separately deployed payments API, e.g. https://api.tanktickets.site
-      # Set this in GitHub → Settings → Secrets and variables → Actions → Variables.
-      # Leave unset only for local/same-origin API deployments.
+      # Optional public origin of a standalone payments API, e.g. https://api.tanktickets.site.
+      # When unset, tanktickets.site calls the Supabase Edge Functions (zengapay-collect / zengapay-status).
       VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
-      # Optional hosted DGateway store override. Defaults in code to the tanktickets store.
-      # Set the repository variable to off to force in-app API checkout.
-      VITE_DGATEWAY_STORE_URL: ${{ vars.VITE_DGATEWAY_STORE_URL }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

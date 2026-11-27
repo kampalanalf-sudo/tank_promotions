@@ -46,7 +46,7 @@ export type Order = {
   amount: number;
   status: OrderStatus;
   paymentRef: string;
-  dgatewayRef?: string;
+  zengaRef?: string;
   provider?: string;
   providerRef?: string;
   externalRef: string;

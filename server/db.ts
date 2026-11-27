@@ -1,5 +1,5 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { GatewayError, type ServerEnv } from "./dgateway";
+import { GatewayError, type ServerEnv } from "./zengapay";
 
 export type OrderRow = {
   id: string;
@@ -14,8 +14,9 @@ export type OrderRow = {
   amount: number;
   currency: string;
   status: "PENDING" | "SUCCEEDED" | "FAILED" | "CHECKED_IN";
-  dgateway_ref: string;
+  zenga_ref?: string;
   payment_ref?: string;
+  dgateway_ref?: string;
   collection_started_at?: string | null;
   last_status_check_at?: string | null;
   provider: string;
@@ -27,7 +28,8 @@ export type OrderRow = {
 export type PayoutRow = {
   id: string;
   external_ref: string;
-  dgateway_ref: string;
+  zenga_ref?: string;
+  dgateway_ref?: string;
   amount: number;
   currency: string;
   phone_number: string;
@@ -39,6 +41,14 @@ export type PayoutRow = {
   last_status_check_at?: string | null;
   created_at: string;
 };
+
+export function orderReference(row: OrderRow): string {
+  return row.zenga_ref || row.payment_ref || "";
+}
+
+export function payoutReference(row: PayoutRow): string {
+  return row.zenga_ref || row.dgateway_ref || "";
+}
 
 export function requireSupabase(env: ServerEnv) {
   const url = env.SUPABASE_URL?.trim();
@@ -66,18 +76,19 @@ export function buyerClient(env: ServerEnv, req: Request): SupabaseClient {
 export async function requireAdmin(env: ServerEnv, req: Request) {
   const authorization = req.headers.get("Authorization") || "";
   const token = authorization.replace(/^Bearer\s+/i, "").trim();
-  if (!token) throw new GatewayError("Sign in as an administrator to request a payout.", "UNAUTHORIZED", 401);
+  if (!token) throw new GatewayError("Sign in as an administrator to request a transfer.", "UNAUTHORIZED", 401);
   const admin = adminClient(env);
   const { data, error } = await admin.auth.getUser(token);
-  if (error || !data.user) throw new GatewayError("Sign in as an administrator to request a payout.", "UNAUTHORIZED", 401);
+  if (error || !data.user) throw new GatewayError("Sign in as an administrator to request a transfer.", "UNAUTHORIZED", 401);
   const adminEmail = (env.ADMIN_EMAIL || "admin@tanktickets.site").trim().toLowerCase();
   if (!data.user.email_confirmed_at || (data.user.email || "").toLowerCase() !== adminEmail) {
-    throw new GatewayError("Only TANK administrators can request payouts.", "FORBIDDEN", 403);
+    throw new GatewayError("Only TANK administrators can send transfers.", "FORBIDDEN", 403);
   }
   return data.user;
 }
 
 export function publicOrder(row: OrderRow) {
+  const ref = orderReference(row);
   return {
     id: row.id,
     code: row.code,
@@ -90,9 +101,9 @@ export function publicOrder(row: OrderRow) {
     qty: row.qty,
     amount: row.amount,
     status: row.status,
-    paymentRef: row.dgateway_ref || row.payment_ref || "",
-    dgatewayRef: row.dgateway_ref || "",
-    provider: row.provider || "",
+    paymentRef: ref,
+    zengaRef: ref,
+    provider: row.provider || "zengapay",
     providerRef: row.provider_ref || "",
     externalRef: row.external_ref,
     createdAt: row.created_at,
@@ -103,13 +114,13 @@ export function publicPayout(row: PayoutRow) {
   return {
     id: row.id,
     externalRef: row.external_ref,
-    reference: row.dgateway_ref,
+    reference: payoutReference(row),
     amount: row.amount,
-    currency: row.currency,
+    currency: row.currency || "UGX",
     phoneNumber: row.phone_number,
     description: row.description,
     status: row.status,
-    provider: row.provider || "",
+    provider: row.provider || "zengapay",
     providerRef: row.provider_ref || "",
     createdAt: row.created_at,
   };
