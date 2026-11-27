@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Menu, MessageCircle, Ticket, X } from "lucide-react";
 import { useState } from "react";
 import { Logo } from "./components";
-import { CONTACT_PHONE, DGATEWAY_STORE_URL, LOGO_REMOTE_URL, LOGO_URL } from "./lib/config";
+import { CONTACT_PHONE, LOGO_REMOTE_URL, LOGO_URL } from "./lib/config";
 import type { Session } from "./lib/types";
 
 export const WA = `https://wa.me/${CONTACT_PHONE}`;
@@ -30,7 +30,7 @@ export function SiteHeader({ session, overlay = false }: { session: Session | nu
         </nav>
         <div className="flex items-center gap-3">
           <a href={accountHref} className="hidden text-[11px] font-extrabold uppercase tracking-[0.16em] sm:block">{session ? session.name.split(" ")[0] : "Sign in"}</a>
-          <a href={DGATEWAY_STORE_URL || "#/#events"} className="btn btn-gold hidden min-h-0! py-2.5 md:inline-flex"><Ticket size={15} /> Get tickets</a>
+          <a href="#/#events" className="btn btn-gold hidden min-h-0! py-2.5 md:inline-flex"><Ticket size={15} /> Get tickets</a>
           <button className="grid h-10 w-10 place-items-center lg:hidden" onClick={() => setOpen((v) => !v)} aria-label="Menu">{open ? <X size={20} /> : <Menu size={20} />}</button>
         </div>
       </div>
@@ -62,7 +62,7 @@ export function SiteFooter({ session }: { session: Session | null }) {
               else img.style.display = "none";
             }}
           />
-          <p className="mt-4 max-w-sm text-sm text-white/45">TANK Tickets is run by TANK Promotions Co. Ltd, Kampala. Payments by MTN MoMoPay and Airtel Money Merchant.</p>
+          <p className="mt-4 max-w-sm text-sm text-white/45">TANK Tickets is run by TANK Promotions Co. Ltd, Kampala. Mobile Money collections powered by ZengaPay (MTN Mobile Money & Airtel Money).</p>
         </div>
         <div className="grid grid-cols-2 gap-x-12 gap-y-2 text-xs font-bold uppercase tracking-widest text-white/55">
           <a href="#/">Find events</a>

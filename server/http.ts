@@ -1,4 +1,4 @@
-import { GatewayError } from "./dgateway";
+import { GatewayError } from "./zengapay";
 
 const ALLOWED_ORIGIN_PATTERNS = [
   /^https:\/\/tanktickets\.site$/,

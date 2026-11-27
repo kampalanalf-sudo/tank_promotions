@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { ADMIN_EMAIL, SUPABASE_ANON_KEY, SUPABASE_URL } from "./config";
+import type { TicketDelivery, TicketDeliveryResult, TicketDeliveryStatus } from "./ticketDelivery";
 import {
   DEFAULT_SETTINGS,
   type Brief,
@@ -12,7 +13,6 @@ import {
   type Settings,
   type TankEvent,
 } from "./types";
-import type { HostedTicketProduct, StoreMapping, StoreMappingInput, StorePayment, StoreTicket, TicketDelivery, TicketDeliveryResult, TicketDeliveryStatus } from "./storeFulfilment";
 
 export const cloud: SupabaseClient | null =
   SUPABASE_URL && SUPABASE_ANON_KEY ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
@@ -61,6 +61,7 @@ function rowToEvent(r: any, sold = 0): TankEvent {
 }
 
 function rowToOrder(r: any): Order {
+  const ref = r.zenga_ref || r.payment_ref || r.dgateway_ref || "";
   return {
     id: r.id,
     code: r.code,
@@ -73,8 +74,8 @@ function rowToOrder(r: any): Order {
     qty: r.qty,
     amount: r.amount,
     status: r.status,
-    paymentRef: r.dgateway_ref || r.payment_ref || r.zenga_ref || "",
-    dgatewayRef: r.dgateway_ref || "",
+    paymentRef: ref,
+    zengaRef: r.zenga_ref || r.payment_ref || "",
     provider: r.provider || "",
     providerRef: r.provider_ref || "",
     externalRef: r.external_ref || "",
@@ -275,7 +276,6 @@ export const api = {
       .sort((a, b) => a.startsAt.localeCompare(b.startsAt));
   },
 
-  /** One event, if the viewer may see it (live, or their own, or they are admin). */
   async getEvent(id: string, session: Session | null): Promise<TankEvent | null> {
     if (cloud) {
       const [{ data, error }, sold] = await Promise.all([cloud.from("events").select("*").eq("id", id).maybeSingle(), api.soldCounts()]);
@@ -469,73 +469,6 @@ export const api = {
       return;
     }
     write(K.settings, values);
-  },
-
-  /* ---------- hosted DGateway store fulfilment ---------- */
-  async hostedTicketProducts(): Promise<HostedTicketProduct[]> {
-    if (!cloud) return [];
-    const { data, error } = await cloud.rpc("hosted_ticket_products");
-    fail(error);
-    return (data || []) as HostedTicketProduct[];
-  },
-
-  async storeTicketByReference(reference: string, email: string): Promise<StoreTicket | null> {
-    if (!cloud) throw new Error("Ticket lookup needs the online database to be connected.");
-    const { data, error } = await cloud.rpc("store_ticket_by_reference", {
-      p_reference: reference.trim(),
-      p_email: email.trim().toLowerCase(),
-    });
-    fail(error);
-    return (data || null) as StoreTicket | null;
-  },
-
-  async listStoreMappings(): Promise<StoreMapping[]> {
-    if (!cloud) throw new Error("Store mapping needs the online database to be connected.");
-    const { data, error } = await cloud.from("dgateway_store_mappings").select("*").order("created_at", { ascending: false });
-    fail(error);
-    return (data || []) as StoreMapping[];
-  },
-
-  async saveStoreMapping(input: StoreMappingInput): Promise<void> {
-    if (!cloud) throw new Error("Store mapping needs the online database to be connected.");
-    const row = {
-      store_slug: input.store_slug.trim(),
-      product_id: input.product_id.trim(),
-      product_slug: input.product_slug.trim(),
-      event_id: input.event_id,
-      label: input.label.trim(),
-      unit_amount: input.unit_amount,
-      currency: input.currency,
-      tickets_per_unit: input.tickets_per_unit,
-      checkout_url: input.checkout_url.trim(),
-      enabled: input.enabled,
-      updated_at: new Date().toISOString(),
-    };
-    const query = input.id
-      ? cloud.from("dgateway_store_mappings").update(row).eq("id", input.id)
-      : cloud.from("dgateway_store_mappings").insert(row);
-    const { error } = await query;
-    fail(error);
-  },
-
-  async deleteStoreMapping(id: string): Promise<void> {
-    if (!cloud) throw new Error("Store mapping needs the online database to be connected.");
-    const { error } = await cloud.from("dgateway_store_mappings").delete().eq("id", id);
-    fail(error);
-  },
-
-  async listStorePayments(): Promise<StorePayment[]> {
-    if (!cloud) throw new Error("Store payments need the online database to be connected.");
-    const { data, error } = await cloud.from("dgateway_store_payments").select("*").order("created_at", { ascending: false }).limit(100);
-    fail(error);
-    return (data || []) as StorePayment[];
-  },
-
-  async reconcileStorePayment(reference: string): Promise<{ fulfilment?: string; code?: string; error?: string }> {
-    if (!cloud) throw new Error("Reconciliation needs the online database to be connected.");
-    const { data, error } = await cloud.functions.invoke("dgateway-store-reconcile", { body: { reference } });
-    if (error) throw new Error(error.message || "Could not reconcile this payment.");
-    return (data || {}) as { fulfilment?: string; code?: string; error?: string };
   },
 
   /* ---------- automatic ticket delivery ---------- */

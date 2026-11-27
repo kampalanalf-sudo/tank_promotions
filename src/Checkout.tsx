@@ -3,12 +3,12 @@ import { CalendarDays, CheckCircle2, MapPin, Minus, Plus, RefreshCw, ShieldCheck
 import { useEffect, useRef, useState } from "react";
 import { Notice, Poster, TicketCard } from "./components";
 import { api } from "./lib/api";
-import { initiatePayment, PaymentError, pollPaymentStatus } from "./lib/dgateway";
-import { eventWhen, ugx } from "./lib/format";
-import { cleanPhone, detectNetwork, isValidGatewayPhone } from "./lib/phone";
-import { emailConfigured, newTicketCode, payloadFor } from "./lib/tickets";
 import { CONTACT_PHONE } from "./lib/config";
+import { eventWhen, ugx } from "./lib/format";
+import { detectNetwork, isValidGatewayPhone, toMsisdn } from "./lib/phone";
+import { emailConfigured, newTicketCode, payloadFor } from "./lib/tickets";
 import type { Order, Session, Settings, TankEvent } from "./lib/types";
+import { initiatePayment, PaymentError, pollPaymentStatus } from "./lib/zengapay";
 
 type Step = "qty" | "details" | "pay" | "done";
 const POLL_INTERVAL = 10_000;
@@ -39,8 +39,8 @@ export function Checkout({ event, session, settings, onClose, onSold }: {
   const [checking, setChecking] = useState(false);
   const finished = useRef(false);
   const submitting = useRef(false);
-  // Reuse the same reference when a network response is lost, preventing a second charge.
-  const attempt = useRef<{ code: string; externalRef: string } | null>(null);
+  // Reuse the same reference when a network response is lost for identical checkout details.
+  const attempt = useRef<{ code: string; externalRef: string; key: string } | null>(null);
   const maxQty = Math.min(10, left);
   const total = event.price * qty;
   const emailOn = Boolean(settings && emailConfigured(settings));
@@ -59,13 +59,17 @@ export function Checkout({ event, session, settings, onClose, onSold }: {
     if (submitting.current || left === 0) return;
     setError("");
     if (!name.trim()) return setError("Enter the guest's full name.");
-    if (!isValidGatewayPhone(phone)) return setError("Enter a valid Mobile Money number, e.g. 0772 123456, 256772123456 or +256772123456.");
+    if (!isValidGatewayPhone(phone)) return setError("Enter a valid Ugandan MTN or Airtel Mobile Money number, e.g. 0772 123456 or +256 755 123456.");
     if (emailOn && !email.trim()) return setError("Enter your email so we can send your ticket.");
     submitting.current = true;
     setBusy(true);
-    attempt.current ||= { code: newTicketCode(), externalRef: `TNK-${crypto.randomUUID()}` };
+    const normalizedPhone = toMsisdn(phone);
+    const key = `${event.id}|${qty}|${name.trim()}|${normalizedPhone}|${email.trim().toLowerCase()}`;
+    if (!attempt.current || attempt.current.key !== key) {
+      attempt.current = { code: newTicketCode(), externalRef: `TNK-${crypto.randomUUID()}`, key };
+    }
     const { code, externalRef } = attempt.current;
-    const input = { eventId: event.id, code, name: name.trim(), phone: cleanPhone(phone), email: email.trim(), qty, externalRef };
+    const input = { eventId: event.id, code, name: name.trim(), phone: normalizedPhone, email: email.trim(), qty, externalRef };
     try {
       if (free) {
         const created = await api.createOrder(input);
@@ -91,6 +95,9 @@ export function Checkout({ event, session, settings, onClose, onSold }: {
       setPollCount(0);
       setStep("pay");
     } catch (err) {
+      if (err instanceof PaymentError && ["ORDER_REJECTED", "VALIDATION_ERROR", "INVALID_PHONE", "PROVIDER_REJECTED", "ORDER_FAILED"].includes(err.code)) {
+        attempt.current = null;
+      }
       setError(err instanceof Error ? err.message : "We couldn't start payment. Check My tickets before trying again.");
     } finally {
       submitting.current = false;
@@ -104,12 +111,13 @@ export function Checkout({ event, session, settings, onClose, onSold }: {
     let timer: number | undefined;
     const started = Date.now();
     const currentOrder = order;
+    const paymentReference = currentOrder.zengaRef || currentOrder.paymentRef || "";
     setTimedOut(false);
     setPollNotice("");
     const tick = async () => {
       setChecking(true);
       try {
-        const result = await pollPaymentStatus(currentOrder.dgatewayRef || currentOrder.paymentRef || "", currentOrder.code);
+        const result = await pollPaymentStatus(paymentReference, currentOrder.code);
         if (stopped) return;
         setPollCount((count) => count + 1);
         if (result.status === "completed" && result.order) {
@@ -157,6 +165,8 @@ export function Checkout({ event, session, settings, onClose, onSold }: {
     }
   };
 
+  const shownPaymentRef = order?.zengaRef || order?.paymentRef || "";
+
   return (
     <motion.div className="fixed inset-0 z-50 flex items-end justify-center bg-black/75 backdrop-blur-xs sm:items-center sm:p-5" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onMouseDown={busy ? undefined : onClose}>
       <motion.div role="dialog" aria-modal="true" aria-labelledby="checkout-title" initial={{ y: 50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} onMouseDown={(e) => e.stopPropagation()} className="relative max-h-[94vh] w-full max-w-lg overflow-y-auto bg-[#efe8d8] p-6 sm:p-8">
@@ -165,7 +175,7 @@ export function Checkout({ event, session, settings, onClose, onSold }: {
           <div>
             <div className="flex items-center gap-2"><CheckCircle2 className="text-emerald-700" size={24} /><p className="eyebrow m-0! text-emerald-800">{free ? "Booking confirmed" : "Payment verified"}</p></div>
             <h3 id="checkout-title" className="display mt-2 text-5xl">You’re on the list.</h3>
-            <p className="mt-3 text-sm text-black/60">{emailOn && order.email ? `Your QR ticket is being emailed to ${order.email}. ` : ""}Save your ticket and show its QR code at the door.</p>
+            <p className="mt-3 text-sm text-black/60">{order.email ? `Your QR ticket is ready and sent to ${order.email} when email delivery is enabled. ` : ""}Save or download your PDF ticket and show its QR code at the door.</p>
             <div className="mt-6"><TicketCard payload={payloadFor(order, event)} phone={order.phone} email={order.email} settings={settings} autoEmail /></div>
             {session && <a href="#/dashboard" className="btn btn-line mt-3 w-full">View in my tickets</a>}
           </div>
@@ -199,7 +209,7 @@ export function Checkout({ event, session, settings, onClose, onSold }: {
                 <label className="label">Full name<input className="field" value={name} onChange={(e) => setName(e.target.value)} required maxLength={80} autoComplete="name" placeholder="e.g. Sarah Namubiru" /></label>
                 <label className="label">{free ? "WhatsApp number" : "Mobile Money number (MTN / Airtel)"}<input className="field" type="tel" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} required placeholder="e.g. 0772 123456" autoComplete="tel" /></label>
                 {phone && isValidGatewayPhone(phone) && !free && <div className="rounded bg-[#c9a227]/15 p-2 text-xs font-bold text-[#6d5308]">{detectNetwork(phone)} Mobile Money · Direct phone prompt</div>}
-                <label className="label">Email {emailOn ? "(required for ticket delivery)" : "(optional)"}<input className="field" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required={emailOn} autoComplete="email" placeholder="e.g. sarah@gmail.com" /></label>
+                <label className="label">Email {emailOn ? "(required for ticket delivery)" : "(for PDF ticket delivery)"}<input className="field" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required={emailOn} autoComplete="email" placeholder="e.g. sarah@gmail.com" /></label>
                 {!free && <div className="rounded border border-black/10 bg-white/70 p-3 text-xs leading-5 text-black/70"><p className="font-extrabold uppercase tracking-wider text-black">How Mobile Money works</p><p className="mt-1">Tap Pay, then approve {ugx(total)} on your phone with your Mobile Money PIN. Your ticket unlocks after the payment is verified. Never share your PIN on this website.</p></div>}
                 {error && <div role="alert" className="border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-700">{error}</div>}
                 <button disabled={busy || !name.trim() || !phone.trim()} className="btn btn-gold w-full text-sm font-black disabled:opacity-50">{busy ? "Requesting…" : free ? `Get ${qty} free ticket${qty > 1 ? "s" : ""}` : `Pay ${ugx(total)} with Mobile Money`}<ShieldCheck size={16} /></button>
@@ -213,7 +223,7 @@ export function Checkout({ event, session, settings, onClose, onSold }: {
                 <p className="mt-4 text-sm leading-6 text-black/70">Approve the payment prompt of <b>{ugx(order.amount)}</b> sent to <b>{order.phone}</b>. Enter your PIN on your phone, not on this page.</p>
                 <div className="mt-4 grid gap-2 border border-black/12 bg-white/70 p-4 text-sm">
                   <p className="flex justify-between gap-3"><span>Ticket reference</span><b className="font-mono">{order.code}</b></p>
-                  {order.dgatewayRef && <p className="flex flex-wrap justify-between gap-2 text-xs text-black/50"><span>Payment reference</span><span className="break-all font-mono">{order.dgatewayRef}</span></p>}
+                  {shownPaymentRef && <p className="flex flex-wrap justify-between gap-2 text-xs text-black/50"><span>Payment reference</span><span className="break-all font-mono">{shownPaymentRef}</span></p>}
                 </div>
                 <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-xs text-black/60" role="status">
                   <span className="flex items-center gap-2"><RefreshCw size={13} className={checking ? "animate-spin" : ""} />{checking ? "Checking payment…" : timedOut ? "Still awaiting confirmation" : `Waiting for confirmation · ${pollCount} check${pollCount === 1 ? "" : "s"}`}</span>

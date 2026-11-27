@@ -56,12 +56,21 @@ Deno.serve(async (req: Request) => {
     let orderId = typeof body?.order_id === "string" ? body.order_id.trim() : "";
     const reference = typeof body?.reference === "string" ? body.reference.trim() : "";
     if (!orderId && reference) {
-      const { data, error } = await admin.from("dgateway_store_payments").select("order_id").eq("reference", reference).maybeSingle();
-      if (error) return json(req, { ok: false, error: "Could not load the store payment." }, 503);
-      orderId = (data?.order_id as string | null) || "";
+      if (/^TNK-[A-Z0-9]{8}$/i.test(reference)) {
+        const { data } = await admin.from("orders").select("id").eq("code", reference.toUpperCase()).maybeSingle();
+        orderId = (data?.id as string | null) || "";
+      }
+      if (!orderId) {
+        const { data } = await admin.from("orders").select("id").eq("zenga_ref", reference).maybeSingle();
+        orderId = (data?.id as string | null) || "";
+      }
+      if (!orderId) {
+        const { data } = await admin.from("orders").select("id").eq("payment_ref", reference).maybeSingle();
+        orderId = (data?.id as string | null) || "";
+      }
     }
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orderId)) {
-      return json(req, { ok: false, error: "A valid order_id or issued store reference is required." }, 400);
+      return json(req, { ok: false, error: "A valid order ID, ticket code (TNK-…), or ZengaPay reference is required." }, 400);
     }
     const result = await deliverOrderTicket(admin, config, orderId, { force: body?.force === true });
     return json(req, { ok: true, ...result });

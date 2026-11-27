@@ -1,21 +1,21 @@
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { handleCollect, handleDisburse, handleStatus, handleWebhook } from "./handlers";
-import type { ServerEnv } from "./dgateway";
+import type { ServerEnv } from "./zengapay";
 import { json } from "./http";
 
 const env = process.env as ServerEnv;
 const port = Number(process.env.PORT || 8787);
 
-const requiredServerEnv = ["DGATEWAY_API_KEY", "SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"] as const;
+const requiredServerEnv = ["ZENGAPAY_API_KEY", "SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"] as const;
 const missingServerEnv = requiredServerEnv.filter((key) => !env[key]?.trim());
 if (missingServerEnv.length) {
   console.warn(`payments-api: missing server env (${missingServerEnv.join(", ")}); payment routes will fail closed.`);
 } else {
   console.log("payments-api: required server env is present.");
 }
-if (!env.DGATEWAY_WEBHOOK_SECRET?.trim()) {
-  console.warn("payments-api: DGATEWAY_WEBHOOK_SECRET is not set; webhooks will be verified by re-fetching the transaction from DGateway.");
+if (!env.ZENGAPAY_WEBHOOK_SECRET?.trim()) {
+  console.warn("payments-api: ZENGAPAY_WEBHOOK_SECRET is not set; /api/webhooks/zengapay will reject callbacks until configured.");
 }
 
 async function toRequest(req: IncomingMessage) {
@@ -48,10 +48,10 @@ const server = createServer(async (req, res) => {
     const request = await toRequest(req);
     const path = new URL(request.url).pathname;
     let response: Response;
-    if (path === "/api/health") response = json(request, { ok: true, service: "tank-payments-api" });
+    if (path === "/api/health") response = json(request, { ok: true, service: "tank-payments-api", provider: "zengapay" });
     else if (path === "/api/payments/collect") response = await handleCollect(request, env);
     else if (path === "/api/payments/disburse") response = await handleDisburse(request, env);
-    else if (path === "/api/webhooks/dgateway") response = await handleWebhook(request, env);
+    else if (path === "/api/webhooks/zengapay") response = await handleWebhook(request, env);
     else {
       const match = path.match(/^\/api\/payments\/([^/]+)\/status$/);
       if (match) response = await handleStatus(request, env, decodeURIComponent(match[1]));
@@ -69,5 +69,5 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(port, "0.0.0.0", () => {
-  console.log(`TANK payments API listening on http://0.0.0.0:${port}`);
+  console.log(`TANK ZengaPay API listening on http://0.0.0.0:${port}`);
 });

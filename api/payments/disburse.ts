@@ -1,5 +1,5 @@
 import { handleDisburse } from "../../server/handlers";
-import type { ServerEnv } from "../../server/dgateway";
+import type { ServerEnv } from "../../server/zengapay";
 
 export const config = { runtime: "edge" };
 
