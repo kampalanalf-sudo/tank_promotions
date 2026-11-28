@@ -37,10 +37,14 @@ export class PaymentError extends Error {
 }
 
 function useEdgeFunctions(): boolean {
+  if (typeof window !== "undefined" && /(^|\.)tanktickets\.site$/i.test(window.location.hostname)) {
+    return Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
+  }
   return !API_BASE_URL && Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 }
 
 export function zengaWebhookUrl(supabaseUrl = SUPABASE_URL, apiBaseUrl = API_BASE_URL): string {
+  if (supabaseUrl && !apiBaseUrl) return `${supabaseUrl.replace(/\/$/, "")}/functions/v1/zengapay-webhook`;
   if (apiBaseUrl) return `${apiBaseUrl.replace(/\/$/, "")}/api/webhooks/zengapay`;
   if (supabaseUrl) return `${supabaseUrl.replace(/\/$/, "")}/functions/v1/zengapay-webhook`;
   return "";
@@ -48,8 +52,12 @@ export function zengaWebhookUrl(supabaseUrl = SUPABASE_URL, apiBaseUrl = API_BAS
 
 async function sessionToken(): Promise<string> {
   if (!cloud) return "";
-  const { data } = await cloud.auth.getSession();
-  return data.session?.access_token || "";
+  try {
+    const { data } = await cloud.auth.getSession();
+    return data.session?.access_token || "";
+  } catch {
+    return "";
+  }
 }
 
 async function callPaymentEndpoint(
@@ -91,7 +99,7 @@ async function callPaymentEndpoint(
   }
   if (!response.ok || !data?.ok) {
     throw new PaymentError(
-      data?.error || data?.message || "The payment service did not confirm this request.",
+      data?.error || data?.message || `Payment request failed (HTTP ${response.status}).`,
       data?.code || "PAYMENT_UNAVAILABLE",
     );
   }

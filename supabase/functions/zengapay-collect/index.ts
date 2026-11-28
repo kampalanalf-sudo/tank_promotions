@@ -49,11 +49,21 @@ Deno.serve(async (req: Request) => {
       throw new GatewayError("The payment database is not configured.", "PAYMENT_NOT_CONFIGURED", 503);
     }
 
-    const buyer = createClient(url, anonKey, {
-      auth: { persistSession: false, autoRefreshToken: false },
-      global: { headers: { Authorization: req.headers.get("Authorization") || `Bearer ${anonKey}` } },
-    });
     const admin = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
+    const rawAuth = (req.headers.get("Authorization") || "").trim();
+    const bearerToken = rawAuth.replace(/^Bearer\s+/i, "").trim();
+    let validUserAuth: string | null = null;
+    if (bearerToken && bearerToken.split(".").length === 3) {
+      const { data: userData } = await admin.auth.getUser(bearerToken);
+      if (userData?.user) validUserAuth = `Bearer ${bearerToken}`;
+    }
+    const buyer = createClient(
+      url,
+      anonKey,
+      validUserAuth
+        ? { auth: { persistSession: false, autoRefreshToken: false }, global: { headers: { Authorization: validUserAuth } } }
+        : { auth: { persistSession: false, autoRefreshToken: false } },
+    );
 
     const { data, error } = await buyer.rpc("create_order", {
       p_event_id: body.event_id,

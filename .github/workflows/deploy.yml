@@ -21,9 +21,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       VITE_BUILD_SHA: ${{ github.sha }}
-      # Optional public origin of a standalone payments API, e.g. https://api.tanktickets.site.
-      # When unset, tanktickets.site calls the Supabase Edge Functions (zengapay-collect / zengapay-status).
-      VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
