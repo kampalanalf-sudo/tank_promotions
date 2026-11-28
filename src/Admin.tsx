@@ -421,6 +421,7 @@ export default function Admin({
                     <div className="mt-3 flex flex-wrap gap-4">
                       <a className="inline-flex items-center gap-1 font-bold underline" href="https://dashboard.zengapay.com" target="_blank" rel="noreferrer">Open ZengaPay Dashboard <ExternalLink size={13} /></a>
                       <a className="inline-flex items-center gap-1 font-bold underline" href="https://developers.zengapay.com" target="_blank" rel="noreferrer">ZengaPay API Docs <ExternalLink size={13} /></a>
+                      <a className="inline-flex items-center gap-1 font-bold underline" href="/TANK-Tickets-ZengaPay-Admin-Manual.pdf" download="TANK-Tickets-ZengaPay-Admin-Manual.pdf">Download Admin Manual (PDF) <ExternalLink size={13} /></a>
                     </div>
                   </div>
                 </section>
