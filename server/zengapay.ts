@@ -152,9 +152,11 @@ async function zengaRequest(env: ServerEnv, path: string, init?: { method?: stri
     const json = await response.json().catch(() => null) as Record<string, unknown> | null;
     if (!response.ok) {
       const message = asString(json?.message) || asString(json?.error) || `ZengaPay returned HTTP ${response.status}`;
+      const zengaData = json?.data && typeof json.data === "object" ? json.data as Record<string, unknown> : null;
+      const zengaEnv = asString(zengaData?.env, 40);
       if (response.status === 401) {
         throw new GatewayError(
-          "ZengaPay rejected the server API key or environment. Verify ZENGAPAY_API_KEY and ZENGAPAY_BASE_URL.",
+          `ZengaPay authentication failed${zengaEnv ? ` (${zengaEnv})` : ""}: ${message}`,
           "PAYMENT_NOT_CONFIGURED",
           503,
         );
